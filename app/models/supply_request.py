@@ -16,6 +16,7 @@ class SupplyRequest(SupplyBase):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     started_at = Column(DateTime, nullable=True)
     approved_at = Column(DateTime, nullable=True)
+    rejected_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     deadline = Column(DateTime, nullable=True)
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=False, index=True)
@@ -42,6 +43,7 @@ class RequestLog(SupplyBase):
     user_id = Column(CHAR(36), nullable=False, index=True)
     request_id = Column(String(36), nullable=False, index=True)
     status_name = Column(String(20), nullable=False)
+    date_response = Column(DateTime, nullable=True)
 
 
 class StatusRef(SupplyBase):

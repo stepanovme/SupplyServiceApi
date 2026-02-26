@@ -138,6 +138,7 @@ class RequestRepository:
                     "user_id": log.user_id,
                     "request_id": log.request_id,
                     "status_name": log.status_name,
+                    "date_response": log.date_response,
                 }
                 for log in logs_by_request_id.get(str(req.id), [])
             ]
@@ -152,6 +153,7 @@ class RequestRepository:
                     "created_at": req.created_at,
                     "started_at": req.started_at,
                     "approved_at": req.approved_at,
+                    "rejected_at": req.rejected_at,
                     "completed_at": req.completed_at,
                     "deadline": req.deadline,
                     "status": None if not status else {"id": status.id, "name": status.name},
