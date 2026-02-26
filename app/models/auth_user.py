@@ -9,3 +9,4 @@ class AuthUser(AuthBase):
     id = Column(String(36), primary_key=True)
     name = Column(String(100))
     surname = Column(String(100))
+    patronymic = Column(String(100))
