@@ -152,3 +152,19 @@ def download_request_attachment(
         filename=payload["filename"],
         media_type=payload["media_type"],
     )
+
+
+@requests_router.delete(
+    "/{request_id}/attachments/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить файл заявки",
+)
+def delete_request_attachment(
+    request_id: int,
+    file_id: str,
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+):
+    service = RequestFileService(RequestFileRepository(db))
+    service.delete_request_file(request_id, file_id, str(session.user_id))
+    return None

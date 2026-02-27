@@ -33,7 +33,10 @@ class RequestFileRepository:
             self.db.query(RequestFile, FileDB, FileType)
             .join(FileDB, FileDB.id == RequestFile.file_id)
             .join(FileType, FileType.id == FileDB.file_type_id)
-            .filter(RequestFile.request_id == request_id)
+            .filter(
+                RequestFile.request_id == request_id,
+                FileDB.status == "active",
+            )
             .order_by(RequestFile.sort_order.asc(), RequestFile.created_at.desc())
             .all()
         )
@@ -55,4 +58,8 @@ class RequestFileRepository:
 
     def add_audit(self, audit: FileAudit) -> None:
         self.db.add(audit)
+        self.db.commit()
+
+    def mark_file_deleted(self, file_row: FileDB) -> None:
+        file_row.status = "deleted"
         self.db.commit()

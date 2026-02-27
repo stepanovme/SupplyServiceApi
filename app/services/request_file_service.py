@@ -173,3 +173,27 @@ class RequestFileService:
             "filename": file_row.original_name,
             "media_type": file_row.mime_type,
         }
+
+    def delete_request_file(self, request_id: int, file_id: str, user_id: str):
+        if not self.repo.request_exists(request_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+        row = self.repo.get_request_file(request_id, file_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+
+        _, file_row, _ = row
+        self.repo.mark_file_deleted(file_row)
+        self.repo.add_audit(
+            FileAudit(
+                id=str(uuid.uuid4()),
+                file_id=file_row.id,
+                action="delete",
+                user_id=user_id,
+            )
+        )
+
+        if os.path.exists(file_row.file_path):
+            os.remove(file_row.file_path)
+
+        return None
