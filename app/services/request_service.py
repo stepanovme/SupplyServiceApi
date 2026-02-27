@@ -67,6 +67,20 @@ class RequestService:
             or any(log.get("user_id") == user_id for log in item.get("logs", []))
         ]
 
+    def get_by_id(self, request_id: int):
+        requests = self.get_all()
+        for item in requests:
+            if item.get("id") == request_id:
+                return item
+        return None
+
+    def get_available_for_user_by_id(self, user_id: str, request_id: int):
+        requests = self.get_available_for_user(user_id)
+        for item in requests:
+            if item.get("id") == request_id:
+                return item
+        return None
+
     @staticmethod
     def _map_user(user):
         if not user:
