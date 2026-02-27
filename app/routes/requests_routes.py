@@ -1,11 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 
 from app.database import DbAuthSession, DbReferenceSession, DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.session import SessionDB
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
+from app.repositories.request_file_repository import RequestFileRepository
 from app.repositories.request_repository import RequestRepository
+from app.services.request_file_service import RequestFileService
 from app.services.request_service import RequestService
 
 requests_router = APIRouter(prefix="/requests", tags=["Requests"])
@@ -93,3 +96,59 @@ def get_request_by_id(
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
     return item
+
+
+@requests_router.post(
+    "/{request_id}/attachments",
+    status_code=status.HTTP_201_CREATED,
+    summary="Загрузить файл-приложение к заявке",
+)
+async def upload_request_attachment(
+    request_id: int,
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+    file: UploadFile = File(...),
+):
+    service = RequestFileService(RequestFileRepository(db))
+    file_bytes = await file.read()
+    return service.upload_request_attachment(
+        request_id=request_id,
+        original_name=file.filename or "file",
+        mime_type=file.content_type or "application/octet-stream",
+        file_bytes=file_bytes,
+        user_id=str(session.user_id),
+    )
+
+
+@requests_router.get(
+    "/{request_id}/attachments",
+    status_code=status.HTTP_200_OK,
+    summary="Получить список файлов заявки",
+)
+def get_request_attachments(
+    request_id: int,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = RequestFileService(RequestFileRepository(db))
+    return service.get_request_files(request_id)
+
+
+@requests_router.get(
+    "/{request_id}/attachments/{file_id}/download",
+    status_code=status.HTTP_200_OK,
+    summary="Скачать файл заявки",
+)
+def download_request_attachment(
+    request_id: int,
+    file_id: str,
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+):
+    service = RequestFileService(RequestFileRepository(db))
+    payload = service.get_download_file_payload(request_id, file_id, str(session.user_id))
+    return FileResponse(
+        path=payload["path"],
+        filename=payload["filename"],
+        media_type=payload["media_type"],
+    )
