@@ -40,3 +40,7 @@ class ReferenceObjectRepository:
         if not unique_ids:
             return []
         return self.db.query(WorkTypeRef).filter(WorkTypeRef.id.in_(unique_ids)).all()
+
+    def get_level_ids_by_type(self, level_type: str) -> list[str]:
+        rows = self.db.query(ObjectLevel.id).filter(ObjectLevel.level_type == level_type).all()
+        return [row[0] for row in rows]

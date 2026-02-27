@@ -22,3 +22,14 @@ class ProjectUserRoleRepository:
     def delete(self, item: ProjectUserRole) -> None:
         self.db.delete(item)
         self.db.commit()
+
+    def get_object_level_ids_by_user_and_role(self, user_id: str, role: str) -> list[str]:
+        rows = (
+            self.db.query(ProjectUserRole.object_levels_id)
+            .filter(
+                ProjectUserRole.user_id == user_id,
+                ProjectUserRole.role == role,
+            )
+            .all()
+        )
+        return [row[0] for row in rows]

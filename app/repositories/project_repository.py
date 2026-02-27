@@ -23,3 +23,18 @@ class ProjectRepository:
         self.db.commit()
         self.db.refresh(project)
         return project
+
+    def get_active_object_ids(self, object_ids: list[str]) -> set[str]:
+        unique_ids = list({object_id for object_id in object_ids if object_id})
+        if not unique_ids:
+            return set()
+
+        rows = (
+            self.db.query(Project.object_id)
+            .filter(
+                Project.object_id.in_(unique_ids),
+                Project.is_active.is_(True),
+            )
+            .all()
+        )
+        return {row[0] for row in rows}
