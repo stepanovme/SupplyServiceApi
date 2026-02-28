@@ -109,3 +109,23 @@ class SupplyRequestUpdate(BaseModel):
     completed_at: datetime | None = Field(default=None)
     deadline: datetime | None = Field(default=None)
     status_id: str | None = Field(default=None)
+
+
+class RequestItemCreate(BaseModel):
+    num: int | None = Field(default=None)
+    nomenclature_id: str | None = Field(default=None)
+    name: str | None = Field(default=None)
+    unit_id: str | None = Field(default=None)
+    quantity: float | None = Field(default=1.0)
+    warehouse_category_id: str | None = Field(default=None)
+    comment: str | None = Field(default=None)
+
+
+class RequestItemUpdate(BaseModel):
+    num: int | None = Field(default=None)
+    nomenclature_id: str | None = Field(default=None)
+    name: str | None = Field(default=None)
+    unit_id: str | None = Field(default=None)
+    quantity: float | None = Field(default=None)
+    warehouse_category_id: str | None = Field(default=None)
+    comment: str | None = Field(default=None)

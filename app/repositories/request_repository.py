@@ -1,3 +1,4 @@
+import uuid
 from collections import defaultdict
 
 from sqlalchemy.orm import Session
@@ -178,3 +179,59 @@ class RequestRepository:
         self.db.commit()
         self.db.refresh(request_row)
         return request_row
+
+    def request_exists(self, request_id: int) -> bool:
+        return (
+            self.db.query(SupplyRequest.id).filter(SupplyRequest.id == request_id).first() is not None
+        )
+
+    def get_units_by_ids(self, unit_ids: list[str]) -> list[UnitRef]:
+        unique_ids = list({item for item in unit_ids if item})
+        if not unique_ids:
+            return []
+        return self.db.query(UnitRef).filter(UnitRef.id.in_(unique_ids)).all()
+
+    def get_warehouse_categories_by_ids(self, category_ids: list[str]) -> list[WarehouseCategoryRef]:
+        unique_ids = list({item for item in category_ids if item})
+        if not unique_ids:
+            return []
+        return self.db.query(WarehouseCategoryRef).filter(WarehouseCategoryRef.id.in_(unique_ids)).all()
+
+    def get_nomenclature_by_id(self, nomenclature_id: str) -> NomenclatureRef | None:
+        return self.db.query(NomenclatureRef).filter(NomenclatureRef.id == nomenclature_id).first()
+
+    def get_next_request_item_num(self, request_id: int) -> int:
+        max_num = (
+            self.db.query(RequestItem.num).filter(RequestItem.request_id == request_id).order_by(RequestItem.num.desc()).first()
+        )
+        return (max_num[0] + 1) if max_num else 1
+
+    def create_request_item(
+        self,
+        request_id: int,
+        payload: dict,
+    ) -> RequestItem:
+        item = RequestItem(
+            id=str(uuid.uuid4()),
+            request_id=request_id,
+            **payload,
+        )
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def get_request_item_by_id(self, request_id: int, item_id: str) -> RequestItem | None:
+        return (
+            self.db.query(RequestItem)
+            .filter(
+                RequestItem.id == item_id,
+                RequestItem.request_id == request_id,
+            )
+            .first()
+        )
+
+    def save_request_item(self, item: RequestItem) -> RequestItem:
+        self.db.commit()
+        self.db.refresh(item)
+        return item
