@@ -148,6 +148,7 @@ class RequestRepository:
                     "id": req.id,
                     "object_levels_id": req.object_levels_id,
                     "name": req.name,
+                    "comment": req.comment,
                     "created_by": req.created_by,
                     "executor": req.executor,
                     "created_at": req.created_at,

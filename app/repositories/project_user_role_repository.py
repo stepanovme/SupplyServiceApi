@@ -10,6 +10,18 @@ class ProjectUserRoleRepository:
     def get_all(self) -> list[ProjectUserRole]:
         return self.db.query(ProjectUserRole).all()
 
+    def get_by_object_levels_id(
+        self,
+        object_levels_id: str,
+        role: str | None = None,
+    ) -> list[ProjectUserRole]:
+        query = self.db.query(ProjectUserRole).filter(
+            ProjectUserRole.object_levels_id == object_levels_id
+        )
+        if role:
+            query = query.filter(ProjectUserRole.role == role)
+        return query.all()
+
     def create(self, item: ProjectUserRole) -> ProjectUserRole:
         self.db.add(item)
         self.db.commit()

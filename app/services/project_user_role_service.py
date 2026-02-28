@@ -17,6 +17,17 @@ class ProjectUserRoleService:
 
     def get_all_with_users(self):
         items = self.repo.get_all()
+        return self._enrich_with_users(items)
+
+    def get_by_object_levels_id_with_users(
+        self,
+        object_levels_id: str,
+        role: str | None = None,
+    ):
+        items = self.repo.get_by_object_levels_id(object_levels_id, role)
+        return self._enrich_with_users(items)
+
+    def _enrich_with_users(self, items: list[ProjectUserRole]):
         if not self.auth_user_repo:
             return items
 

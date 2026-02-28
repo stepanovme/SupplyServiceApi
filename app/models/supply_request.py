@@ -12,6 +12,7 @@ class SupplyRequest(SupplyBase):
     id = Column(Integer, primary_key=True, autoincrement=True)
     object_levels_id = Column(CHAR(36), nullable=False, index=True)
     name = Column(String(200), nullable=True)
+    comment = Column(Text, nullable=True)
     created_by = Column(CHAR(36), nullable=False, index=True)
     executor = Column(CHAR(36), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -88,6 +89,7 @@ class WarehouseCategoryRef(SupplyBase):
 class SupplyRequestCreate(BaseModel):
     object_levels_id: str | None = Field(default=None)
     name: str | None = Field(default=None)
+    comment: str | None = Field(default=None)
     executor: str | None = Field(default=None)
     started_at: datetime | None = Field(default=None)
     approved_at: datetime | None = Field(default=None)
@@ -99,6 +101,7 @@ class SupplyRequestCreate(BaseModel):
 class SupplyRequestUpdate(BaseModel):
     object_levels_id: str | None = Field(default=None)
     name: str | None = Field(default=None)
+    comment: str | None = Field(default=None)
     executor: str | None = Field(default=None)
     started_at: datetime | None = Field(default=None)
     approved_at: datetime | None = Field(default=None)
