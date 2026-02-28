@@ -163,3 +163,17 @@ class RequestRepository:
             )
 
         return result
+
+    def get_model_by_id(self, request_id: int) -> SupplyRequest | None:
+        return self.db.query(SupplyRequest).filter(SupplyRequest.id == request_id).first()
+
+    def create(self, request_row: SupplyRequest) -> SupplyRequest:
+        self.db.add(request_row)
+        self.db.commit()
+        self.db.refresh(request_row)
+        return request_row
+
+    def save(self, request_row: SupplyRequest) -> SupplyRequest:
+        self.db.commit()
+        self.db.refresh(request_row)
+        return request_row

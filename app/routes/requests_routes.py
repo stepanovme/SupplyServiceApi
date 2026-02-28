@@ -4,6 +4,7 @@ from fastapi.responses import FileResponse
 from app.database import DbAuthSession, DbReferenceSession, DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.session import SessionDB
+from app.models.supply_request import SupplyRequestCreate, SupplyRequestUpdate
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_file_repository import RequestFileRepository
@@ -12,6 +13,18 @@ from app.services.request_file_service import RequestFileService
 from app.services.request_service import RequestService
 
 requests_router = APIRouter(prefix="/requests", tags=["Requests"])
+
+
+def build_request_service(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+) -> RequestService:
+    return RequestService(
+        RequestRepository(supply_db),
+        AuthUserRepository(auth_db),
+        ReferenceObjectRepository(reference_db),
+    )
 
 
 @requests_router.get(
@@ -25,11 +38,7 @@ def get_all_requests(
     reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = RequestService(
-        RequestRepository(supply_db),
-        AuthUserRepository(auth_db),
-        ReferenceObjectRepository(reference_db),
-    )
+    service = build_request_service(supply_db, auth_db, reference_db)
     return service.get_all()
 
 
@@ -44,11 +53,7 @@ def get_my_requests(
     reference_db: DbReferenceSession,
     session: SessionDB = Depends(get_session),
 ):
-    service = RequestService(
-        RequestRepository(supply_db),
-        AuthUserRepository(auth_db),
-        ReferenceObjectRepository(reference_db),
-    )
+    service = build_request_service(supply_db, auth_db, reference_db)
     return service.get_available_for_user(str(session.user_id))
 
 
@@ -64,11 +69,7 @@ def get_my_request_by_id(
     reference_db: DbReferenceSession,
     session: SessionDB = Depends(get_session),
 ):
-    service = RequestService(
-        RequestRepository(supply_db),
-        AuthUserRepository(auth_db),
-        ReferenceObjectRepository(reference_db),
-    )
+    service = build_request_service(supply_db, auth_db, reference_db)
     item = service.get_available_for_user_by_id(str(session.user_id), request_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
@@ -87,15 +88,44 @@ def get_request_by_id(
     reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = RequestService(
-        RequestRepository(supply_db),
-        AuthUserRepository(auth_db),
-        ReferenceObjectRepository(reference_db),
-    )
+    service = build_request_service(supply_db, auth_db, reference_db)
     item = service.get_by_id(request_id)
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
     return item
+
+
+@requests_router.post(
+    "",
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать заявку",
+)
+def create_request(
+    payload: SupplyRequestCreate,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+):
+    service = build_request_service(supply_db, auth_db, reference_db)
+    return service.create(payload, str(session.user_id))
+
+
+@requests_router.patch(
+    "/{request_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Редактировать заявку",
+)
+def update_request(
+    request_id: int,
+    payload: SupplyRequestUpdate,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_request_service(supply_db, auth_db, reference_db)
+    return service.update(request_id, payload)
 
 
 @requests_router.post(

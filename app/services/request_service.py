@@ -1,7 +1,12 @@
+from fastapi import HTTPException, status
+
+from app.models.supply_request import SupplyRequest, SupplyRequestCreate, SupplyRequestUpdate
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_repository import RequestRepository
 from app.services.project_name_builder import build_project_name, load_project_reference_maps
+
+DEFAULT_NEW_REQUEST_STATUS_ID = "1ff34436-1312-11f1-aa8c-bc241127d0bd"
 
 
 class RequestService:
@@ -80,6 +85,36 @@ class RequestService:
             if item.get("id") == request_id:
                 return item
         return None
+
+    def create(self, data: SupplyRequestCreate, user_id: str):
+        payload = data.model_dump(exclude_none=True)
+        object_levels_id = payload.get("object_levels_id")
+        if not object_levels_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="object_levels_id is required",
+            )
+
+        request_row = SupplyRequest(
+            object_levels_id=object_levels_id,
+            created_by=user_id,
+            status_id=DEFAULT_NEW_REQUEST_STATUS_ID,
+            **{k: v for k, v in payload.items() if k != "object_levels_id"},
+        )
+        created = self.repo.create(request_row)
+        return self.get_by_id(created.id)
+
+    def update(self, request_id: int, data: SupplyRequestUpdate):
+        request_row = self.repo.get_model_by_id(request_id)
+        if not request_row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+        payload = data.model_dump(exclude_unset=True)
+        for field_name, field_value in payload.items():
+            setattr(request_row, field_name, field_value)
+
+        updated = self.repo.save(request_row)
+        return self.get_by_id(updated.id)
 
     @staticmethod
     def _map_user(user):

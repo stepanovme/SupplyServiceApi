@@ -1,5 +1,6 @@
 from datetime import datetime
 
+from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
@@ -10,7 +11,7 @@ class SupplyRequest(SupplyBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     object_levels_id = Column(CHAR(36), nullable=False, index=True)
-    name = Column(String(200), nullable=False)
+    name = Column(String(200), nullable=True)
     created_by = Column(CHAR(36), nullable=False, index=True)
     executor = Column(CHAR(36), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -82,3 +83,26 @@ class WarehouseCategoryRef(SupplyBase):
     id = Column(CHAR(36), primary_key=True)
     name = Column(String(200), nullable=False)
     parent_id = Column(CHAR(36), nullable=True, index=True)
+
+
+class SupplyRequestCreate(BaseModel):
+    object_levels_id: str | None = Field(default=None)
+    name: str | None = Field(default=None)
+    executor: str | None = Field(default=None)
+    started_at: datetime | None = Field(default=None)
+    approved_at: datetime | None = Field(default=None)
+    rejected_at: datetime | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
+    deadline: datetime | None = Field(default=None)
+
+
+class SupplyRequestUpdate(BaseModel):
+    object_levels_id: str | None = Field(default=None)
+    name: str | None = Field(default=None)
+    executor: str | None = Field(default=None)
+    started_at: datetime | None = Field(default=None)
+    approved_at: datetime | None = Field(default=None)
+    rejected_at: datetime | None = Field(default=None)
+    completed_at: datetime | None = Field(default=None)
+    deadline: datetime | None = Field(default=None)
+    status_id: str | None = Field(default=None)
