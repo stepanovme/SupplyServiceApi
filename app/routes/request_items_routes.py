@@ -38,3 +38,19 @@ def update_request_item(
 ):
     service = RequestItemService(RequestRepository(db))
     return service.update(request_id, item_id, payload)
+
+
+@request_items_router.delete(
+    "/{request_id}/items/{item_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить предмет из заявки",
+)
+def delete_request_item(
+    request_id: int,
+    item_id: str,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = RequestItemService(RequestRepository(db))
+    service.delete(request_id, item_id)
+    return None

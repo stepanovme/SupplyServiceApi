@@ -235,3 +235,37 @@ class RequestRepository:
         self.db.commit()
         self.db.refresh(item)
         return item
+
+    def delete_request_item(self, item: RequestItem) -> None:
+        self.db.delete(item)
+        self.db.commit()
+
+    def create_request_log(self, request_id: int, payload: dict) -> RequestLog:
+        item = RequestLog(
+            id=str(uuid.uuid4()),
+            request_id=str(request_id),
+            **payload,
+        )
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def get_request_log_by_id(self, request_id: int, log_id: str) -> RequestLog | None:
+        return (
+            self.db.query(RequestLog)
+            .filter(
+                RequestLog.id == log_id,
+                RequestLog.request_id == str(request_id),
+            )
+            .first()
+        )
+
+    def save_request_log(self, item: RequestLog) -> RequestLog:
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def delete_request_log(self, item: RequestLog) -> None:
+        self.db.delete(item)
+        self.db.commit()

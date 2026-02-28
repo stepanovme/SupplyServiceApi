@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, DateTime, Float, ForeignKey, Integer, String, Text
@@ -129,3 +130,15 @@ class RequestItemUpdate(BaseModel):
     quantity: float | None = Field(default=None)
     warehouse_category_id: str | None = Field(default=None)
     comment: str | None = Field(default=None)
+
+
+class RequestApproverCreate(BaseModel):
+    user_id: str
+    status_name: Literal["pending", "approved", "rejected"] = Field(default="pending")
+    date_response: datetime | None = Field(default=None)
+
+
+class RequestApproverUpdate(BaseModel):
+    user_id: str | None = Field(default=None)
+    status_name: Literal["pending", "approved", "rejected"] | None = Field(default=None)
+    date_response: datetime | None = Field(default=None)

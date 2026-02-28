@@ -62,6 +62,17 @@ class RequestItemService:
         updated = self.repo.save_request_item(item)
         return self._to_response(updated)
 
+    def delete(self, request_id: int, item_id: str):
+        if not self.repo.request_exists(request_id):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request not found")
+
+        item = self.repo.get_request_item_by_id(request_id, item_id)
+        if not item:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Request item not found")
+
+        self.repo.delete_request_item(item)
+        return None
+
     @staticmethod
     def _to_response(item):
         return {
