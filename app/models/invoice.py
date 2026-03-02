@@ -11,6 +11,7 @@ class Invoice(SupplyBase):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     request_id = Column(Integer, nullable=True, index=True)
+    file_id = Column(CHAR(36), nullable=True, index=True)
     provider_id = Column(CHAR(36), nullable=True, index=True)
     payer_id = Column(CHAR(36), nullable=True, index=True)
     is_delivery_included = Column(Boolean, nullable=False, default=False)
@@ -45,6 +46,7 @@ class InvoiceItem(SupplyBase):
 
 class InvoiceCreate(BaseModel):
     request_id: int | None = Field(default=None)
+    file_id: str | None = Field(default=None)
     provider_id: str | None = Field(default=None)
     payer_id: str | None = Field(default=None)
     is_delivery_included: bool | None = Field(default=None)
@@ -60,6 +62,7 @@ class InvoiceCreate(BaseModel):
 
 class InvoiceUpdate(BaseModel):
     request_id: int | None = Field(default=None)
+    file_id: str | None = Field(default=None)
     provider_id: str | None = Field(default=None)
     payer_id: str | None = Field(default=None)
     is_delivery_included: bool | None = Field(default=None)

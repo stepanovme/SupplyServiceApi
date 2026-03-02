@@ -38,6 +38,12 @@ class RequestFileRepository:
         self.db.refresh(file_row)
         return file_row
 
+    def create_file(self, file_row: FileDB) -> FileDB:
+        self.db.add(file_row)
+        self.db.commit()
+        self.db.refresh(file_row)
+        return file_row
+
     def get_request_files(self, request_id: int, link_type: str | None = None):
         query = (
             self.db.query(RequestFile, FileDB, FileType)

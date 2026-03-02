@@ -8,7 +8,10 @@ from fastapi import HTTPException, status
 from app.models.request_file import FileAudit, FileDB, RequestFile
 from app.repositories.request_file_repository import RequestFileRepository
 
-BASE_REQUEST_FILES_DIR = "/home/webserver/models/supply/request"
+BASE_REQUEST_FILES_DIR = os.getenv(
+    "SUPPLY_REQUEST_FILES_DIR",
+    os.path.join(os.getcwd(), "storage", "request"),
+)
 INVOICE_FILE_TYPE_ID = "4594a94b-140f-11f1-aa8c-bc241127d0bd"
 
 
@@ -61,7 +64,7 @@ class RequestFileService:
         file_id = str(uuid.uuid4())
         storage_name = f"{uuid.uuid4().hex}.{extension}"
         request_dir = os.path.join(BASE_REQUEST_FILES_DIR, str(request_id))
-        os.makedirs(request_dir, exist_ok=True)
+        self._ensure_directory(request_dir)
         file_path = os.path.join(request_dir, storage_name)
 
         with open(file_path, "wb") as f:
@@ -193,7 +196,7 @@ class RequestFileService:
         file_id = str(uuid.uuid4())
         storage_name = f"{uuid.uuid4().hex}.{extension}"
         request_dir = os.path.join(BASE_REQUEST_FILES_DIR, str(request_id))
-        os.makedirs(request_dir, exist_ok=True)
+        self._ensure_directory(request_dir)
         file_path = os.path.join(request_dir, storage_name)
 
         with open(file_path, "wb") as f:
@@ -280,6 +283,19 @@ class RequestFileService:
             }
             for request_file, file_row, file_type in rows
         ]
+
+    @staticmethod
+    def _ensure_directory(path: str) -> None:
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=(
+                    f"Cannot create directory '{path}'. "
+                    "Set SUPPLY_REQUEST_FILES_DIR to a writable path."
+                ),
+            ) from exc
 
     def get_download_file_payload(self, request_id: int, file_id: str, user_id: str):
         if not self.repo.request_exists(request_id):

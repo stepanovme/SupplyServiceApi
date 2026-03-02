@@ -1,10 +1,14 @@
-from fastapi import APIRouter, Depends, status
+import json
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from pydantic import ValidationError
 
 from app.database import DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.invoice import InvoiceCreate, InvoiceItemCreate, InvoiceItemUpdate, InvoiceUpdate
 from app.models.session import SessionDB
 from app.repositories.invoice_repository import InvoiceRepository
+from app.repositories.request_file_repository import RequestFileRepository
 from app.services.invoice_service import InvoiceService
 
 invoices_router = APIRouter(prefix="/invoices", tags=["Invoices"])
@@ -22,6 +26,36 @@ def create_invoice(
 ):
     service = InvoiceService(InvoiceRepository(db))
     return service.create_invoice(payload, str(session.user_id))
+
+
+@invoices_router.post(
+    "/with-file",
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать счет сразу с файлом",
+)
+async def create_invoice_with_file(
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+    payload_json: str = Form(...),
+    file: UploadFile = File(...),
+):
+    try:
+        payload = InvoiceCreate.model_validate(json.loads(payload_json))
+    except (json.JSONDecodeError, ValidationError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid payload_json for invoice",
+        ) from exc
+
+    service = InvoiceService(InvoiceRepository(db), RequestFileRepository(db))
+    file_bytes = await file.read()
+    return service.create_invoice_with_file(
+        payload=payload,
+        user_id=str(session.user_id),
+        original_name=file.filename or "file",
+        mime_type=file.content_type or "application/octet-stream",
+        file_bytes=file_bytes,
+    )
 
 
 @invoices_router.patch(
