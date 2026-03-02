@@ -42,6 +42,14 @@ class RequestApproverService:
         self.repo.delete_request_log(item)
         return None
 
+    def get_my_approvals_summary(self, user_id: str, status_name: str | None = None):
+        rows = self.repo.get_request_logs_by_user(user_id, status_name)
+        pending_count = self.repo.count_request_logs_by_user_and_status(user_id, "pending")
+        return {
+            "pending_count": pending_count,
+            "items": [self._to_response(item) for item in rows],
+        }
+
     @staticmethod
     def _to_response(item):
         return {

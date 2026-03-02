@@ -1,12 +1,29 @@
-from fastapi import APIRouter, Depends, status
+from typing import Literal
+
+from fastapi import APIRouter, Depends, Query, status
 
 from app.database import DbSupplySession
 from app.middleware.auth_middleware import get_session
+from app.models.session import SessionDB
 from app.models.supply_request import RequestApproverCreate, RequestApproverUpdate
 from app.repositories.request_repository import RequestRepository
 from app.services.request_approver_service import RequestApproverService
 
 request_approvers_router = APIRouter(prefix="/requests", tags=["RequestApprovers"])
+
+
+@request_approvers_router.get(
+    "/my/approvals",
+    status_code=status.HTTP_200_OK,
+    summary="Мои согласования по заявкам",
+)
+def get_my_approvals(
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+    status_name: Literal["pending", "approved", "rejected"] | None = Query(default=None),
+):
+    service = RequestApproverService(RequestRepository(db))
+    return service.get_my_approvals_summary(str(session.user_id), status_name)
 
 
 @request_approvers_router.post(

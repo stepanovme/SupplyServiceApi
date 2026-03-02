@@ -269,3 +269,23 @@ class RequestRepository:
     def delete_request_log(self, item: RequestLog) -> None:
         self.db.delete(item)
         self.db.commit()
+
+    def get_request_logs_by_user(
+        self,
+        user_id: str,
+        status_name: str | None = None,
+    ) -> list[RequestLog]:
+        query = self.db.query(RequestLog).filter(RequestLog.user_id == user_id)
+        if status_name:
+            query = query.filter(RequestLog.status_name == status_name)
+        return query.order_by(RequestLog.id.desc()).all()
+
+    def count_request_logs_by_user_and_status(self, user_id: str, status_name: str) -> int:
+        return (
+            self.db.query(RequestLog)
+            .filter(
+                RequestLog.user_id == user_id,
+                RequestLog.status_name == status_name,
+            )
+            .count()
+        )
