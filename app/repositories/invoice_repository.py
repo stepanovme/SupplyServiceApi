@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.invoice import Invoice, InvoiceItem
+from app.models.supply_request import StatusRef
 
 
 class InvoiceRepository:
@@ -62,3 +63,9 @@ class InvoiceRepository:
     def delete_invoice_item(self, item: InvoiceItem) -> None:
         self.db.delete(item)
         self.db.commit()
+
+    def get_status_name(self, status_id: str | None) -> str | None:
+        if not status_id:
+            return None
+        row = self.db.query(StatusRef).filter(StatusRef.id == status_id).first()
+        return row.name if row else None

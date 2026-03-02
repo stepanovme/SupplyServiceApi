@@ -3,15 +3,24 @@ import json
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 from pydantic import ValidationError
 
-from app.database import DbSupplySession
+from app.database import DbReferenceSession, DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.invoice import InvoiceCreate, InvoiceItemCreate, InvoiceItemUpdate, InvoiceUpdate
 from app.models.session import SessionDB
+from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.request_file_repository import RequestFileRepository
 from app.services.invoice_service import InvoiceService
 
 invoices_router = APIRouter(prefix="/invoices", tags=["Invoices"])
+
+
+def build_invoice_service(supply_db: DbSupplySession, reference_db: DbReferenceSession) -> InvoiceService:
+    return InvoiceService(
+        InvoiceRepository(supply_db),
+        RequestFileRepository(supply_db),
+        CounterpartyRepository(reference_db),
+    )
 
 
 @invoices_router.post(
@@ -21,10 +30,11 @@ invoices_router = APIRouter(prefix="/invoices", tags=["Invoices"])
 )
 def create_invoice(
     payload: InvoiceCreate,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     session: SessionDB = Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     return service.create_invoice(payload, str(session.user_id))
 
 
@@ -34,7 +44,8 @@ def create_invoice(
     summary="Создать счет сразу с файлом",
 )
 async def create_invoice_with_file(
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     session: SessionDB = Depends(get_session),
     payload_json: str = Form(...),
     file: UploadFile = File(...),
@@ -47,7 +58,7 @@ async def create_invoice_with_file(
             detail="Invalid payload_json for invoice",
         ) from exc
 
-    service = InvoiceService(InvoiceRepository(db), RequestFileRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     file_bytes = await file.read()
     return service.create_invoice_with_file(
         payload=payload,
@@ -66,10 +77,11 @@ async def create_invoice_with_file(
 def update_invoice(
     invoice_id: int,
     payload: InvoiceUpdate,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     return service.update_invoice(invoice_id, payload)
 
 
@@ -80,10 +92,11 @@ def update_invoice(
 )
 def delete_invoice(
     invoice_id: int,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     service.delete_invoice(invoice_id)
     return None
 
@@ -95,10 +108,11 @@ def delete_invoice(
 )
 def get_invoice(
     invoice_id: int,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     return service.get_invoice(invoice_id)
 
 
@@ -110,10 +124,11 @@ def get_invoice(
 def create_invoice_item(
     invoice_id: int,
     payload: InvoiceItemCreate,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     return service.create_invoice_item(invoice_id, payload)
 
 
@@ -126,10 +141,11 @@ def update_invoice_item(
     invoice_id: int,
     item_id: str,
     payload: InvoiceItemUpdate,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     return service.update_invoice_item(invoice_id, item_id, payload)
 
 
@@ -141,9 +157,10 @@ def update_invoice_item(
 def delete_invoice_item(
     invoice_id: int,
     item_id: str,
-    db: DbSupplySession,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
     _session=Depends(get_session),
 ):
-    service = InvoiceService(InvoiceRepository(db))
+    service = build_invoice_service(supply_db, reference_db)
     service.delete_invoice_item(invoice_id, item_id)
     return None

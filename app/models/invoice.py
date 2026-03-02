@@ -1,7 +1,8 @@
+from datetime import date as dt_date
 from datetime import datetime
 
 from pydantic import BaseModel, Field
-from sqlalchemy import CHAR, Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CHAR, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
 
@@ -10,6 +11,8 @@ class Invoice(SupplyBase):
     __tablename__ = "invoice"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    num = Column(String(100), nullable=True)
+    date = Column(Date, nullable=True)
     request_id = Column(Integer, nullable=True, index=True)
     file_id = Column(CHAR(36), nullable=True, index=True)
     provider_id = Column(CHAR(36), nullable=True, index=True)
@@ -45,6 +48,8 @@ class InvoiceItem(SupplyBase):
 
 
 class InvoiceCreate(BaseModel):
+    num: str | None = Field(default=None)
+    date: dt_date | None = Field(default=None)
     request_id: int | None = Field(default=None)
     file_id: str | None = Field(default=None)
     provider_id: str | None = Field(default=None)
@@ -61,6 +66,8 @@ class InvoiceCreate(BaseModel):
 
 
 class InvoiceUpdate(BaseModel):
+    num: str | None = Field(default=None)
+    date: dt_date | None = Field(default=None)
     request_id: int | None = Field(default=None)
     file_id: str | None = Field(default=None)
     provider_id: str | None = Field(default=None)

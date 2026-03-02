@@ -85,3 +85,13 @@ class RequestFileRepository:
     def mark_file_deleted(self, file_row: FileDB) -> None:
         file_row.status = "deleted"
         self.db.commit()
+
+    def get_file_by_id(self, file_id: str) -> FileDB | None:
+        return (
+            self.db.query(FileDB)
+            .filter(
+                FileDB.id == file_id,
+                FileDB.status == "active",
+            )
+            .first()
+        )

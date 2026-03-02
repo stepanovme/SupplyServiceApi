@@ -13,6 +13,7 @@ from app.models.invoice import (
     InvoiceUpdate,
 )
 from app.repositories.invoice_repository import InvoiceRepository
+from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.request_file_repository import RequestFileRepository
 
 DEFAULT_NEW_STATUS_ID = "1ff34436-1312-11f1-aa8c-bc241127d0bd"
@@ -28,9 +29,11 @@ class InvoiceService:
         self,
         repo: InvoiceRepository,
         file_repo: RequestFileRepository | None = None,
+        counterparty_repo: CounterpartyRepository | None = None,
     ) -> None:
         self.repo = repo
         self.file_repo = file_repo
+        self.counterparty_repo = counterparty_repo
 
     def create_invoice(self, payload: InvoiceCreate, user_id: str):
         data = payload.model_dump(exclude_unset=True)
@@ -220,10 +223,15 @@ class InvoiceService:
         items = self.repo.get_invoice_items(invoice_id)
         return {
             "id": invoice.id,
+            "num": invoice.num,
+            "date": invoice.date,
             "request_id": invoice.request_id,
             "file_id": invoice.file_id,
+            "file": self._build_file_payload(invoice.file_id),
             "provider_id": invoice.provider_id,
+            "provider": self._build_counterparty_payload(invoice.provider_id),
             "payer_id": invoice.payer_id,
+            "payer": self._build_counterparty_payload(invoice.payer_id),
             "is_delivery_included": invoice.is_delivery_included,
             "prepayment_percent": invoice.prepayment_percent,
             "due_days": invoice.due_days,
@@ -233,6 +241,7 @@ class InvoiceService:
             "vat_rate": invoice.vat_rate,
             "vat_amount": invoice.vat_amount,
             "status": invoice.status,
+            "status_name": self.repo.get_status_name(invoice.status),
             "created_at": invoice.created_at,
             "updated_at": invoice.updated_at,
             "created_by": invoice.created_by,
@@ -253,4 +262,26 @@ class InvoiceService:
             "value_nds": item.value_nds,
             "unit_id": item.unit_id,
             "converted_quantity": item.converted_quantity,
+        }
+
+    def _build_counterparty_payload(self, counterparty_id: str | None) -> dict | None:
+        if not self.counterparty_repo:
+            return None
+        return self.counterparty_repo.get_counterparty_brief(counterparty_id)
+
+    def _build_file_payload(self, file_id: str | None) -> dict | None:
+        if not file_id or not self.file_repo:
+            return None
+
+        file_row = self.file_repo.get_file_by_id(file_id)
+        if not file_row:
+            return None
+
+        return {
+            "id": file_row.id,
+            "original_name": file_row.original_name,
+            "file_path": file_row.file_path,
+            "mime_type": file_row.mime_type,
+            "extension": file_row.extension,
+            "file_size": file_row.file_size,
         }
