@@ -19,7 +19,7 @@ DEFAULT_NEW_STATUS_ID = "1ff34436-1312-11f1-aa8c-bc241127d0bd"
 INVOICE_FILE_TYPE_ID = "4594a94b-140f-11f1-aa8c-bc241127d0bd"
 BASE_INVOICE_FILES_DIR = os.getenv(
     "SUPPLY_INVOICE_FILES_DIR",
-    os.path.join(os.getcwd(), "storage", "invoice"),
+    "/home/webserver/models/supply/invoices",
 )
 
 
