@@ -88,6 +88,7 @@ class InvoiceService:
         items = self.repo.get_invoice_items(invoice_id)
         return {
             "id": invoice.id,
+            "request_id": invoice.request_id,
             "provider_id": invoice.provider_id,
             "payer_id": invoice.payer_id,
             "is_delivery_included": invoice.is_delivery_included,
