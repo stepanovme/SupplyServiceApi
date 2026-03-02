@@ -198,3 +198,39 @@ def delete_request_attachment(
     service = RequestFileService(RequestFileRepository(db))
     service.delete_request_file(request_id, file_id, str(session.user_id))
     return None
+
+
+@requests_router.post(
+    "/{request_id}/invoices",
+    status_code=status.HTTP_201_CREATED,
+    summary="Загрузить файл счета к заявке",
+)
+async def upload_request_invoice_file(
+    request_id: int,
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+    file: UploadFile = File(...),
+):
+    service = RequestFileService(RequestFileRepository(db))
+    file_bytes = await file.read()
+    return service.upload_request_invoice_file(
+        request_id=request_id,
+        original_name=file.filename or "file",
+        mime_type=file.content_type or "application/octet-stream",
+        file_bytes=file_bytes,
+        user_id=str(session.user_id),
+    )
+
+
+@requests_router.get(
+    "/{request_id}/invoices",
+    status_code=status.HTTP_200_OK,
+    summary="Получить список файлов счетов заявки",
+)
+def get_request_invoice_files(
+    request_id: int,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = RequestFileService(RequestFileRepository(db))
+    return service.get_request_invoice_files(request_id)

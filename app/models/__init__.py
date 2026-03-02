@@ -1,4 +1,5 @@
 from app.models.auth_user import AuthUser
+from app.models.invoice import Invoice, InvoiceItem
 from app.models.project import Project
 from app.models.project_user_role import ProjectUserRole
 from app.models.request_file import FileAudit, FileDB, FileType, RequestFile

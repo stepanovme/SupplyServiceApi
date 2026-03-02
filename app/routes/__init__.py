@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.routes.catalog_routes import catalog_router
+from app.routes.invoices_routes import invoices_router
 from app.routes.project_user_roles_routes import project_user_roles_router
 from app.routes.projects_routes import projects_router
 from app.routes.request_approvers_routes import request_approvers_router
@@ -11,6 +12,7 @@ from app.routes.requests_routes import requests_router
 main_router = APIRouter(prefix="/api/supply")
 
 main_router.include_router(projects_router)
+main_router.include_router(invoices_router)
 main_router.include_router(project_user_roles_router)
 main_router.include_router(request_approvers_router)
 main_router.include_router(requests_router)

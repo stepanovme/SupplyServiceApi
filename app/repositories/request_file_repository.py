@@ -21,6 +21,16 @@ class RequestFileRepository:
             .first()
         )
 
+    def get_file_type_by_id(self, file_type_id: str) -> FileType | None:
+        return (
+            self.db.query(FileType)
+            .filter(
+                FileType.id == file_type_id,
+                FileType.is_active.is_(True),
+            )
+            .first()
+        )
+
     def create_file_and_link(self, file_row: FileDB, request_file_row: RequestFile) -> FileDB:
         self.db.add(file_row)
         self.db.add(request_file_row)
@@ -28,8 +38,8 @@ class RequestFileRepository:
         self.db.refresh(file_row)
         return file_row
 
-    def get_request_files(self, request_id: int):
-        rows = (
+    def get_request_files(self, request_id: int, link_type: str | None = None):
+        query = (
             self.db.query(RequestFile, FileDB, FileType)
             .join(FileDB, FileDB.id == RequestFile.file_id)
             .join(FileType, FileType.id == FileDB.file_type_id)
@@ -37,6 +47,12 @@ class RequestFileRepository:
                 RequestFile.request_id == request_id,
                 FileDB.status == "active",
             )
+        )
+        if link_type:
+            query = query.filter(RequestFile.link_type == link_type)
+
+        rows = (
+            query
             .order_by(RequestFile.sort_order.asc(), RequestFile.created_at.desc())
             .all()
         )
