@@ -1,8 +1,13 @@
 import hashlib
+import json
 import os
+import re
 import uuid
+from datetime import date as dt_date
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import HTTPException, status
 
 from app.models.request_file import FileAudit, FileDB
@@ -34,6 +39,141 @@ class InvoiceService:
         self.repo = repo
         self.file_repo = file_repo
         self.counterparty_repo = counterparty_repo
+
+    def parse_invoice_file_and_update(self, invoice_id: int, file_path: str, user_id: str):
+        invoice = self.repo.get_invoice_by_id(invoice_id)
+        if not invoice:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+        if not os.path.isabs(file_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="file_path must be absolute",
+            )
+        if not os.path.exists(file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found by file_path",
+            )
+
+        mistral_api_key = os.getenv("MISTRAL_API_KEY")
+        if not mistral_api_key:
+            project_root = Path(__file__).resolve().parents[2]
+            load_dotenv(project_root / ".env", override=True)
+            mistral_api_key = os.getenv("MISTRAL_API_KEY")
+        if not mistral_api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="MISTRAL_API_KEY is not set",
+            )
+
+        try:
+            from mistralai import Mistral
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="mistralai package is not installed",
+            ) from exc
+
+        try:
+            with open(file_path, "rb") as file_stream:
+                file_bytes = file_stream.read()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Cannot read file: {file_path}",
+            ) from exc
+
+        client = Mistral(api_key=mistral_api_key)
+        uploaded_file = client.files.upload(
+            file={
+                "file_name": os.path.basename(file_path),
+                "content": file_bytes,
+            },
+            purpose="ocr",
+        )
+        signed_url = client.files.get_signed_url(file_id=uploaded_file.id)
+        ocr_response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={
+                "type": "document_url",
+                "document_url": signed_url.url,
+            },
+        )
+
+        document_text = "\n\n".join(page.markdown for page in ocr_response.pages)
+        prompt = (
+            "Extract invoice data from the document.\n"
+            "Return ONLY valid JSON object with keys:\n"
+            "{\n"
+            '  "invoice_num": string|null,\n'
+            '  "invoice_date": "YYYY-MM-DD"|null,\n'
+            '  "vat_rate": int|null,\n'
+            '  "vat_amount": number|null,\n'
+            '  "total_amount": number|null,\n'
+            '  "items": [\n'
+            "    {\n"
+            '      "name": string|null,\n'
+            '      "unit_name": string|null,\n'
+            '      "quantity": number|null,\n'
+            '      "price": number|null,\n'
+            '      "sum": number|null\n'
+            "    }\n"
+            "  ]\n"
+            "}\n"
+            "If field is missing in document, set null.\n"
+            "Document:\n"
+            f"{document_text[:15000]}"
+        )
+
+        chat_response = client.chat.complete(
+            model="mistral-large-latest",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw_content = chat_response.choices[0].message.content
+        if isinstance(raw_content, list):
+            raw_content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part)
+                for part in raw_content
+            )
+        parsed_payload = self._extract_json_payload(raw_content)
+
+        normalized = self._normalize_invoice_payload(parsed_payload)
+        invoice.num = normalized["invoice_num"]
+        invoice.date = normalized["invoice_date"]
+        invoice.total_amount = normalized["total_amount"] if normalized["total_amount"] is not None else 0
+        invoice.vat_rate = normalized["vat_rate"] if normalized["vat_rate"] is not None else 0
+        invoice.vat_amount = normalized["vat_amount"] if normalized["vat_amount"] is not None else 0
+        self.repo.save_invoice(invoice)
+
+        self.repo.delete_invoice_items_by_invoice_id(invoice_id)
+        created_items = []
+        for item in normalized["items"]:
+            created = self.repo.create_invoice_item(invoice_id, item)
+            created_items.append(created)
+
+        if invoice.file_id and self.file_repo:
+            self.file_repo.add_audit(
+                FileAudit(
+                    id=str(uuid.uuid4()),
+                    file_id=invoice.file_id,
+                    action="view",
+                    user_id=user_id,
+                )
+            )
+
+        return {
+            "status": "success",
+            "invoice_id": invoice_id,
+            "updated_invoice": {
+                "invoice_num": normalized["invoice_num"],
+                "invoice_date": normalized["invoice_date"],
+                "vat_rate": normalized["vat_rate"],
+                "vat_amount": normalized["vat_amount"],
+                "total_amount": normalized["total_amount"],
+            },
+            "items_count": len(created_items),
+        }
 
     def create_invoice(self, payload: InvoiceCreate, user_id: str):
         data = payload.model_dump(exclude_unset=True)
@@ -334,3 +474,135 @@ class InvoiceService:
             "extension": file_row.extension,
             "file_size": file_row.file_size,
         }
+
+    @staticmethod
+    def _extract_json_payload(content: str) -> dict:
+        if not content:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Mistral returned empty response",
+            )
+
+        cleaned = content.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+
+        try:
+            payload = json.loads(cleaned)
+        except Exception:
+            match = re.search(r"\{.*\}", cleaned, flags=re.S)
+            if not match:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot parse JSON from Mistral response",
+                )
+            try:
+                payload = json.loads(match.group(0))
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Cannot parse JSON from Mistral response",
+                ) from exc
+
+        if not isinstance(payload, dict):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Unexpected JSON format from Mistral",
+            )
+        return payload
+
+    def _normalize_invoice_payload(self, payload: dict) -> dict:
+        items = payload.get("items")
+        if not isinstance(items, list):
+            items = []
+
+        return {
+            "invoice_num": self._as_str(payload.get("invoice_num")),
+            "invoice_date": self._as_date(payload.get("invoice_date")),
+            "vat_rate": self._as_int(payload.get("vat_rate")),
+            "vat_amount": self._as_money(payload.get("vat_amount")),
+            "total_amount": self._as_money(payload.get("total_amount")),
+            "items": [self._normalize_item(item) for item in items if isinstance(item, dict)],
+        }
+
+    def _normalize_item(self, item: dict) -> dict:
+        return {
+            "name": self._as_str(item.get("name")),
+            "unit_name": self._as_str(item.get("unit_name")),
+            "quantity": self._as_money(item.get("quantity")),
+            "price": self._as_money(item.get("price")),
+            "sum": self._as_money(item.get("sum")),
+        }
+
+    @staticmethod
+    def _as_str(value) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @staticmethod
+    def _as_date(value) -> dt_date | None:
+        if value in (None, ""):
+            return None
+        text = str(value).strip()
+        try:
+            return dt_date.fromisoformat(text)
+        except Exception:
+            m = re.search(r"(\d{2})\.(\d{2})\.(\d{4})", text)
+            if m:
+                day, month, year = m.groups()
+                try:
+                    return dt_date(int(year), int(month), int(day))
+                except Exception:
+                    return None
+            m = re.search(r"(\d{4})/(\d{2})/(\d{2})", text)
+            if m:
+                year, month, day = m.groups()
+                try:
+                    return dt_date(int(year), int(month), int(day))
+                except Exception:
+                    return None
+            m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
+            if m:
+                year, month, day = m.groups()
+                try:
+                    return dt_date(int(year), int(month), int(day))
+                except Exception:
+                    return None
+        return None
+
+    @staticmethod
+    def _as_int(value) -> int | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        match = re.search(r"-?\d+", text)
+        if not match:
+            return None
+        try:
+            return int(match.group(0))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _as_money(value) -> float | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, (int, float)):
+            candidate = str(value)
+        else:
+            candidate = str(value).strip()
+            candidate = candidate.replace(" ", "")
+            candidate = candidate.replace(",", ".")
+            candidate = re.sub(r"[^0-9.\-]", "", candidate)
+        if candidate in ("", "-", ".", "-."):
+            return None
+        try:
+            amount = Decimal(candidate).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            return float(amount)
+        except (InvalidOperation, ValueError):
+            return None

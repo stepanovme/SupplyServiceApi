@@ -105,3 +105,7 @@ class InvoiceItemUpdate(BaseModel):
     value_nds: int | None = Field(default=None)
     unit_id: str | None = Field(default=None)
     converted_quantity: float | None = Field(default=None)
+
+
+class InvoiceParseRequest(BaseModel):
+    file_path: str

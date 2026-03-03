@@ -6,7 +6,13 @@ from pydantic import ValidationError
 
 from app.database import DbReferenceSession, DbSupplySession
 from app.middleware.auth_middleware import get_session
-from app.models.invoice import InvoiceCreate, InvoiceItemCreate, InvoiceItemUpdate, InvoiceUpdate
+from app.models.invoice import (
+    InvoiceCreate,
+    InvoiceItemCreate,
+    InvoiceItemUpdate,
+    InvoiceParseRequest,
+    InvoiceUpdate,
+)
 from app.models.session import SessionDB
 from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.invoice_repository import InvoiceRepository
@@ -135,6 +141,22 @@ def download_invoice_file(
         filename=payload["filename"],
         media_type=payload["media_type"],
     )
+
+
+@invoices_router.post(
+    "/{invoice_id}/parse-file",
+    status_code=status.HTTP_200_OK,
+    summary="Распознать счет из файла и заполнить invoice",
+)
+def parse_invoice_file(
+    invoice_id: int,
+    payload: InvoiceParseRequest,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+):
+    service = build_invoice_service(supply_db, reference_db)
+    return service.parse_invoice_file_and_update(invoice_id, payload.file_path, str(session.user_id))
 
 
 @invoices_router.post(

@@ -64,6 +64,14 @@ class InvoiceRepository:
         self.db.delete(item)
         self.db.commit()
 
+    def delete_invoice_items_by_invoice_id(self, invoice_id: int) -> None:
+        (
+            self.db.query(InvoiceItem)
+            .filter(InvoiceItem.invoice_id == invoice_id)
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+
     def get_status_name(self, status_id: str | None) -> str | None:
         if not status_id:
             return None
