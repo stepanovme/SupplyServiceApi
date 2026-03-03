@@ -3,6 +3,7 @@ from collections import defaultdict
 
 from sqlalchemy.orm import Session
 
+from app.models.invoice import Invoice
 from app.models.supply_request import (
     NomenclatureRef,
     RequestItem,
@@ -70,6 +71,22 @@ class RequestRepository:
         logs_by_request_id = defaultdict(list)
         for log in logs:
             logs_by_request_id[log.request_id].append(log)
+
+        invoices = self.db.query(Invoice).filter(Invoice.request_id.in_(request_ids)).all()
+        invoices_by_request_id = defaultdict(list)
+        for invoice in invoices:
+            status = statuses_by_id.get(invoice.status)
+            invoices_by_request_id[invoice.request_id].append(
+                {
+                    "id": invoice.id,
+                    "num": invoice.num,
+                    "date": invoice.date,
+                    "provider_id": invoice.provider_id,
+                    "payer_id": invoice.payer_id,
+                    "status": invoice.status,
+                    "status_name": status.name if status else None,
+                }
+            )
 
         result = []
         for req in requests:
@@ -161,6 +178,9 @@ class RequestRepository:
                     "status": None if not status else {"id": status.id, "name": status.name},
                     "items": request_items,
                     "logs": request_logs,
+                    "documents": {
+                        "invoices": invoices_by_request_id.get(req.id, []),
+                    },
                 }
             )
 

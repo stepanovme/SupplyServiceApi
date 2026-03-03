@@ -39,3 +39,11 @@ class WorkTypeRef(ReferenceBase):
 
     id = Column(String(36), primary_key=True)
     name = Column(String(255), nullable=True)
+
+
+class CounterpartyRef(ReferenceBase):
+    __tablename__ = "counterparties"
+
+    id = Column(String(36), primary_key=True)
+    short_name = Column(String(255), nullable=True)
+    full_name = Column(String(500), nullable=True)

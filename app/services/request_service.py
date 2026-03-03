@@ -38,6 +38,15 @@ class RequestService:
         users = self.auth_user_repo.get_by_ids(list(user_ids))
         users_by_id = {user.id: user for user in users}
 
+        counterparty_ids = set()
+        for item in requests:
+            for invoice in item.get("documents", {}).get("invoices", []):
+                if invoice.get("provider_id"):
+                    counterparty_ids.add(invoice["provider_id"])
+                if invoice.get("payer_id"):
+                    counterparty_ids.add(invoice["payer_id"])
+        counterparty_names = self.reference_repo.get_counterparty_names(list(counterparty_ids))
+
         object_level_ids = [item["object_levels_id"] for item in requests if item.get("object_levels_id")]
         (
             levels_by_id,
@@ -59,6 +68,10 @@ class RequestService:
 
             for log in item.get("logs", []):
                 log["user"] = self._map_user(users_by_id.get(log.get("user_id")))
+
+            for invoice in item.get("documents", {}).get("invoices", []):
+                invoice["provider_name"] = counterparty_names.get(invoice.get("provider_id"))
+                invoice["payer_name"] = counterparty_names.get(invoice.get("payer_id"))
 
         return requests
 

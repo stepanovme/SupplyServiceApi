@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models.reference_object import ContractRef, ObjectLevel, RefObject, WorkTypeRef
+from app.models.reference_object import ContractRef, CounterpartyRef, ObjectLevel, RefObject, WorkTypeRef
 
 
 class ReferenceObjectRepository:
@@ -44,3 +44,20 @@ class ReferenceObjectRepository:
     def get_level_ids_by_type(self, level_type: str) -> list[str]:
         rows = self.db.query(ObjectLevel.id).filter(ObjectLevel.level_type == level_type).all()
         return [row[0] for row in rows]
+
+    def get_counterparty_names(self, counterparty_ids: list[str]) -> dict[str, str]:
+        unique_ids = list({counterparty_id for counterparty_id in counterparty_ids if counterparty_id})
+        if not unique_ids:
+            return {}
+
+        rows = (
+            self.db.query(CounterpartyRef)
+            .filter(CounterpartyRef.id.in_(unique_ids))
+            .all()
+        )
+
+        result = {}
+        for row in rows:
+            name = row.short_name or row.full_name
+            result[str(row.id)] = name
+        return result
