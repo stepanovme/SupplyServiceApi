@@ -186,6 +186,49 @@ class InvoiceService:
         self.repo.delete_invoice(invoice)
         return None
 
+    def get_invoice_file_download_payload(self, invoice_id: int, user_id: str):
+        if not self.file_repo:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="File repository is not configured",
+            )
+
+        invoice = self.repo.get_invoice_by_id(invoice_id)
+        if not invoice:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+        if not invoice.file_id:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invoice file not found",
+            )
+
+        file_row = self.file_repo.get_file_by_id(invoice.file_id)
+        if not file_row:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Invoice file not found",
+            )
+        if not os.path.exists(file_row.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="File not found on disk",
+            )
+
+        self.file_repo.add_audit(
+            FileAudit(
+                id=str(uuid.uuid4()),
+                file_id=file_row.id,
+                action="download",
+                user_id=user_id,
+            )
+        )
+
+        return {
+            "path": file_row.file_path,
+            "filename": file_row.original_name,
+            "media_type": file_row.mime_type,
+        }
+
     def create_invoice_item(self, invoice_id: int, payload: InvoiceItemCreate):
         invoice = self.repo.get_invoice_by_id(invoice_id)
         if not invoice:
@@ -193,7 +236,8 @@ class InvoiceService:
 
         data = payload.model_dump(exclude_unset=True)
         item = self.repo.create_invoice_item(invoice_id, data)
-        return self._item_to_dict(item)
+        unit_names = self.repo.get_unit_names([item.unit_id] if item.unit_id else [])
+        return self._item_to_dict(item, unit_names)
 
     def update_invoice_item(self, invoice_id: int, item_id: str, payload: InvoiceItemUpdate):
         item = self.repo.get_invoice_item_by_id(invoice_id, item_id)
@@ -205,7 +249,8 @@ class InvoiceService:
             setattr(item, key, value)
 
         updated = self.repo.save_invoice_item(item)
-        return self._item_to_dict(updated)
+        unit_names = self.repo.get_unit_names([updated.unit_id] if updated.unit_id else [])
+        return self._item_to_dict(updated, unit_names)
 
     def delete_invoice_item(self, invoice_id: int, item_id: str):
         item = self.repo.get_invoice_item_by_id(invoice_id, item_id)
@@ -221,6 +266,8 @@ class InvoiceService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
         items = self.repo.get_invoice_items(invoice_id)
+        unit_ids = [item.unit_id for item in items if item.unit_id]
+        unit_names = self.repo.get_unit_names(unit_ids)
         return {
             "id": invoice.id,
             "num": invoice.num,
@@ -245,11 +292,12 @@ class InvoiceService:
             "created_at": invoice.created_at,
             "updated_at": invoice.updated_at,
             "created_by": invoice.created_by,
-            "items": [self._item_to_dict(item) for item in items],
+            "items": [self._item_to_dict(item, unit_names) for item in items],
         }
 
     @staticmethod
-    def _item_to_dict(item):
+    def _item_to_dict(item, unit_names: dict[str, str] | None = None):
+        unit_names = unit_names or {}
         return {
             "id": item.id,
             "invoice_id": item.invoice_id,
@@ -261,6 +309,7 @@ class InvoiceService:
             "nds": item.nds,
             "value_nds": item.value_nds,
             "unit_id": item.unit_id,
+            "unit_converted_name": unit_names.get(item.unit_id) if item.unit_id else None,
             "converted_quantity": item.converted_quantity,
         }
 

@@ -4,7 +4,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.invoice import Invoice, InvoiceItem
-from app.models.supply_request import StatusRef
+from app.models.supply_request import StatusRef, UnitRef
 
 
 class InvoiceRepository:
@@ -69,3 +69,14 @@ class InvoiceRepository:
             return None
         row = self.db.query(StatusRef).filter(StatusRef.id == status_id).first()
         return row.name if row else None
+
+    def get_unit_names(self, unit_ids: list[str]) -> dict[str, str]:
+        if not unit_ids:
+            return {}
+
+        rows = (
+            self.db.query(UnitRef.id, UnitRef.name)
+            .filter(UnitRef.id.in_(unit_ids))
+            .all()
+        )
+        return {str(unit_id): unit_name for unit_id, unit_name in rows}

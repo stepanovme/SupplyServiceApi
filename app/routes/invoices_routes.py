@@ -1,6 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
 from app.database import DbReferenceSession, DbSupplySession
@@ -114,6 +115,26 @@ def get_invoice(
 ):
     service = build_invoice_service(supply_db, reference_db)
     return service.get_invoice(invoice_id)
+
+
+@invoices_router.get(
+    "/{invoice_id}/file/download",
+    status_code=status.HTTP_200_OK,
+    summary="Скачать файл счета",
+)
+def download_invoice_file(
+    invoice_id: int,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+):
+    service = build_invoice_service(supply_db, reference_db)
+    payload = service.get_invoice_file_download_payload(invoice_id, str(session.user_id))
+    return FileResponse(
+        path=payload["path"],
+        filename=payload["filename"],
+        media_type=payload["media_type"],
+    )
 
 
 @invoices_router.post(
