@@ -20,6 +20,23 @@ class ItemMappingRepository:
     def get_invoice_item_by_id(self, invoice_item_id: str) -> InvoiceItem | None:
         return self.db.query(InvoiceItem).filter(InvoiceItem.id == invoice_item_id).first()
 
+    def get_request_items_for_matching(self, request_id: int):
+        return (
+            self.db.query(RequestItem, UnitRef)
+            .outerjoin(UnitRef, UnitRef.id == RequestItem.unit_id)
+            .filter(RequestItem.request_id == request_id)
+            .order_by(RequestItem.num.asc(), RequestItem.id.asc())
+            .all()
+        )
+
+    def get_invoice_items_for_matching(self, invoice_id: int) -> list[InvoiceItem]:
+        return (
+            self.db.query(InvoiceItem)
+            .filter(InvoiceItem.invoice_id == invoice_id)
+            .order_by(InvoiceItem.id.asc())
+            .all()
+        )
+
     def list_mappings(
         self,
         request_id: int | None = None,
@@ -67,6 +84,11 @@ class ItemMappingRepository:
         self.db.refresh(row)
         return row
 
+    def create_mapping_no_commit(self, payload: dict) -> ItemMapping:
+        row = ItemMapping(id=str(uuid.uuid4()), **payload)
+        self.db.add(row)
+        return row
+
     def save_mapping(self, row: ItemMapping) -> ItemMapping:
         self.db.commit()
         self.db.refresh(row)
@@ -74,6 +96,20 @@ class ItemMappingRepository:
 
     def delete_mapping(self, row: ItemMapping) -> None:
         self.db.delete(row)
+        self.db.commit()
+
+    def delete_by_request_invoice(self, request_id: int, invoice_id: int) -> None:
+        (
+            self.db.query(ItemMapping)
+            .filter(
+                ItemMapping.request_id == request_id,
+                ItemMapping.invoice_id == invoice_id,
+            )
+            .delete(synchronize_session=False)
+        )
+        self.db.commit()
+
+    def commit(self) -> None:
         self.db.commit()
 
     def get_unit_names(self, unit_ids: list[str]) -> dict[str, str]:

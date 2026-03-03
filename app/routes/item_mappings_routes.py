@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, status
 
 from app.database import DbSupplySession
 from app.middleware.auth_middleware import get_session
-from app.models.item_mapping import ItemMappingCreate, ItemMappingUpdate
+from app.models.item_mapping import ItemMappingAutoMatchRequest, ItemMappingCreate, ItemMappingUpdate
 from app.repositories.item_mapping_repository import ItemMappingRepository
 from app.services.item_mapping_service import ItemMappingService
 
@@ -91,3 +91,17 @@ def delete_item_mapping(
     service = build_service(db)
     service.delete(mapping_id)
     return None
+
+
+@item_mappings_router.post(
+    "/auto-match",
+    status_code=status.HTTP_200_OK,
+    summary="Автоматическое сопоставление позиций request и invoice через Mistral",
+)
+def auto_match_item_mappings(
+    payload: ItemMappingAutoMatchRequest,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = build_service(db)
+    return service.auto_match(request_id=payload.request_id, invoice_id=payload.invoice_id)

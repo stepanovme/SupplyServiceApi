@@ -42,3 +42,8 @@ class ItemMappingUpdate(BaseModel):
     group_number: int | None = Field(default=None)
     match_type: Literal["direct", "sum", "kit_head", "kit_component"] | None = Field(default=None)
     mapped_quantity: float | None = Field(default=None)
+
+
+class ItemMappingAutoMatchRequest(BaseModel):
+    request_id: int
+    invoice_id: int
