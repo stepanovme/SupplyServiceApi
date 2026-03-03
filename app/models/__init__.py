@@ -1,4 +1,5 @@
 from app.models.auth_user import AuthUser
+from app.models.item_mapping import ItemMapping
 from app.models.invoice import Invoice, InvoiceItem
 from app.models.project import Project
 from app.models.project_user_role import ProjectUserRole
