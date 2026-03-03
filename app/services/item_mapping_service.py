@@ -21,7 +21,12 @@ class ItemMappingService:
             request_item_id=request_item_id,
             invoice_item_id=invoice_item_id,
         )
-        return [self._to_response(mapping, request_item, invoice_item) for mapping, request_item, invoice_item in rows]
+        unit_ids = [mapping.unit_id for mapping, _, _ in rows if mapping.unit_id]
+        unit_names = self.repo.get_unit_names(unit_ids)
+        return [
+            self._to_response(mapping, request_item, invoice_item, unit_names)
+            for mapping, request_item, invoice_item in rows
+        ]
 
     def get_by_id(self, mapping_id: str):
         mapping = self.repo.get_mapping_by_id(mapping_id)
@@ -30,7 +35,8 @@ class ItemMappingService:
 
         request_item = self.repo.get_request_item_by_id(mapping.request_item_id)
         invoice_item = self.repo.get_invoice_item_by_id(mapping.invoice_item_id)
-        return self._to_response(mapping, request_item, invoice_item)
+        unit_names = self.repo.get_unit_names([mapping.unit_id] if mapping.unit_id else [])
+        return self._to_response(mapping, request_item, invoice_item, unit_names)
 
     def create(self, payload: ItemMappingCreate):
         data = payload.model_dump(exclude_unset=True)
@@ -42,9 +48,12 @@ class ItemMappingService:
         )
         data["request_id"] = request_item.request_id
         data["invoice_id"] = invoice_item.invoice_id
+        if "unit_id" not in data:
+            data["unit_id"] = request_item.unit_id
 
         created = self.repo.create_mapping(data)
-        return self._to_response(created, request_item, invoice_item)
+        unit_names = self.repo.get_unit_names([created.unit_id] if created.unit_id else [])
+        return self._to_response(created, request_item, invoice_item, unit_names)
 
     def update(self, mapping_id: str, payload: ItemMappingUpdate):
         mapping = self.repo.get_mapping_by_id(mapping_id)
@@ -65,12 +74,15 @@ class ItemMappingService:
         )
         data["request_id"] = request_item.request_id
         data["invoice_id"] = invoice_item.invoice_id
+        if "unit_id" not in data:
+            data["unit_id"] = request_item.unit_id
 
         for key, value in data.items():
             setattr(mapping, key, value)
 
         updated = self.repo.save_mapping(mapping)
-        return self._to_response(updated, request_item, invoice_item)
+        unit_names = self.repo.get_unit_names([updated.unit_id] if updated.unit_id else [])
+        return self._to_response(updated, request_item, invoice_item, unit_names)
 
     def delete(self, mapping_id: str):
         mapping = self.repo.get_mapping_by_id(mapping_id)
@@ -107,7 +119,8 @@ class ItemMappingService:
 
         return request_item, invoice_item
 
-    def _to_response(self, mapping, request_item, invoice_item):
+    def _to_response(self, mapping, request_item, invoice_item, unit_names: dict[str, str] | None = None):
+        unit_names = unit_names or {}
         mapped_quantity_sum = mapping.mapped_quantity if mapping.match_type == "sum" else None
         mapped_quantity_head = None
         if mapping.match_type == "kit_head":
@@ -125,6 +138,8 @@ class ItemMappingService:
             "invoice_id": mapping.invoice_id,
             "request_item_id": mapping.request_item_id,
             "invoice_item_id": mapping.invoice_item_id,
+            "unit_id": mapping.unit_id,
+            "unit_id_name": unit_names.get(mapping.unit_id) if mapping.unit_id else None,
             "group_number": mapping.group_number,
             "match_type": mapping.match_type,
             "mapped_quantity": mapping.mapped_quantity,

@@ -13,6 +13,7 @@ class ItemMapping(SupplyBase):
     id = Column(CHAR(36), primary_key=True)
     request_id = Column(Integer, ForeignKey("request.id"), nullable=True, index=True)
     invoice_id = Column(Integer, ForeignKey("invoice.id"), nullable=True, index=True)
+    unit_id = Column(CHAR(36), nullable=True, index=True)
     request_item_id = Column(CHAR(36), ForeignKey("request_items.id"), nullable=False, index=True)
     invoice_item_id = Column(CHAR(36), ForeignKey("invoice_items.id"), nullable=False, index=True)
     group_number = Column(Integer, nullable=False)
@@ -24,6 +25,7 @@ class ItemMapping(SupplyBase):
 class ItemMappingCreate(BaseModel):
     request_id: int | None = Field(default=None)
     invoice_id: int | None = Field(default=None)
+    unit_id: str | None = Field(default=None)
     request_item_id: str
     invoice_item_id: str
     group_number: int
@@ -34,6 +36,7 @@ class ItemMappingCreate(BaseModel):
 class ItemMappingUpdate(BaseModel):
     request_id: int | None = Field(default=None)
     invoice_id: int | None = Field(default=None)
+    unit_id: str | None = Field(default=None)
     request_item_id: str | None = Field(default=None)
     invoice_item_id: str | None = Field(default=None)
     group_number: int | None = Field(default=None)

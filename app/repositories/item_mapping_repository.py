@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.models.invoice import InvoiceItem
 from app.models.item_mapping import ItemMapping
-from app.models.supply_request import RequestItem
+from app.models.supply_request import RequestItem, UnitRef
 
 
 class ItemMappingRepository:
@@ -75,3 +75,9 @@ class ItemMappingRepository:
     def delete_mapping(self, row: ItemMapping) -> None:
         self.db.delete(row)
         self.db.commit()
+
+    def get_unit_names(self, unit_ids: list[str]) -> dict[str, str]:
+        if not unit_ids:
+            return {}
+        rows = self.db.query(UnitRef.id, UnitRef.name).filter(UnitRef.id.in_(unit_ids)).all()
+        return {str(unit_id): unit_name for unit_id, unit_name in rows}
