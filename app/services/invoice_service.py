@@ -14,8 +14,12 @@ from fastapi import HTTPException, status
 from app.models.request_file import FileAudit, FileDB
 from app.models.invoice import (
     InvoiceCreate,
+    InvoiceLogCreate,
+    InvoiceLogUpdate,
     InvoiceItemCreate,
     InvoiceItemUpdate,
+    InvoicePaymentCreate,
+    InvoicePaymentUpdate,
     InvoiceUpdate,
 )
 from app.repositories.invoice_repository import InvoiceRepository
@@ -427,6 +431,74 @@ class InvoiceService:
         self.repo.delete_invoice_item(item)
         return None
 
+    def create_invoice_log(self, invoice_id: int, payload: InvoiceLogCreate):
+        invoice = self.repo.get_invoice_by_id(invoice_id)
+        if not invoice:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+        data = payload.model_dump(exclude_unset=True)
+        created = self.repo.create_invoice_log(invoice_id, data)
+        users_by_id = self._get_users_map([created.user_id])
+        return {
+            "id": created.id,
+            "invoice_id": created.invoice_id,
+            "user_id": created.user_id,
+            "user": self._map_user(users_by_id.get(created.user_id)),
+            "type": created.type,
+            "status_name": created.status_name,
+            "date_response": created.date_response,
+        }
+
+    def update_invoice_log(self, invoice_id: int, log_id: str, payload: InvoiceLogUpdate):
+        row = self.repo.get_invoice_log_by_id(invoice_id, log_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice log not found")
+
+        data = payload.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(row, key, value)
+
+        updated = self.repo.save_invoice_log(row)
+        users_by_id = self._get_users_map([updated.user_id])
+        return {
+            "id": updated.id,
+            "invoice_id": updated.invoice_id,
+            "user_id": updated.user_id,
+            "user": self._map_user(users_by_id.get(updated.user_id)),
+            "type": updated.type,
+            "status_name": updated.status_name,
+            "date_response": updated.date_response,
+        }
+
+    def create_invoice_payment(self, invoice_id: int, payload: InvoicePaymentCreate, created_by: str):
+        invoice = self.repo.get_invoice_by_id(invoice_id)
+        if not invoice:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+        data = payload.model_dump(exclude_unset=True)
+        data["created_by"] = created_by
+
+        created = self.repo.create_invoice_payment(invoice_id, data)
+        users_by_id = self._get_users_map(
+            [user_id for user_id in [created.created_by, created.paid_by] if user_id]
+        )
+        return self._map_payment(created, users_by_id)
+
+    def update_invoice_payment(self, invoice_id: int, payment_id: str, payload: InvoicePaymentUpdate):
+        row = self.repo.get_invoice_payment_by_id(invoice_id, payment_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice payment not found")
+
+        data = payload.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(row, key, value)
+
+        updated = self.repo.save_invoice_payment(row)
+        users_by_id = self._get_users_map(
+            [user_id for user_id in [updated.created_by, updated.paid_by] if user_id]
+        )
+        return self._map_payment(updated, users_by_id)
+
     def get_invoice(self, invoice_id: int):
         invoice = self.repo.get_invoice_by_id(invoice_id)
         if not invoice:
@@ -444,8 +516,17 @@ class InvoiceService:
         project_name, project = self._build_project_block(object_levels_id)
 
         logs = self.repo.get_invoice_logs(invoice.id)
+        payments = self.repo.get_invoice_payments(invoice.id)
         log_user_ids = [log.user_id for log in logs if log.user_id]
-        users_by_id = self._get_users_map(log_user_ids + ([invoice.created_by] if invoice.created_by else []))
+        payment_user_ids = []
+        for payment in payments:
+            if payment.created_by:
+                payment_user_ids.append(payment.created_by)
+            if payment.paid_by:
+                payment_user_ids.append(payment.paid_by)
+        users_by_id = self._get_users_map(
+            log_user_ids + payment_user_ids + ([invoice.created_by] if invoice.created_by else [])
+        )
 
         grouped_logs = self._group_invoice_logs(logs, users_by_id)
 
@@ -483,6 +564,7 @@ class InvoiceService:
             "approvals": grouped_logs["approval"],
             "planning": grouped_logs["planning"],
             "payment": grouped_logs["payment"],
+            "payments": [self._map_payment(payment, users_by_id) for payment in payments],
             "items": [self._item_to_dict(item, unit_names) for item in items],
         }
 
@@ -558,6 +640,15 @@ class InvoiceService:
             if log.user_id:
                 user_ids.add(log.user_id)
 
+        payments = self.repo.get_invoice_payments_by_invoice_ids(invoice_ids)
+        payments_by_invoice_id = defaultdict(list)
+        for payment in payments:
+            payments_by_invoice_id[payment.invoice_id].append(payment)
+            if payment.created_by:
+                user_ids.add(payment.created_by)
+            if payment.paid_by:
+                user_ids.add(payment.paid_by)
+
         counterparty_names = self.reference_repo.get_counterparty_names(list(counterparty_ids)) if self.reference_repo else {}
         users_by_id = self._get_users_map(list(user_ids))
 
@@ -594,12 +685,17 @@ class InvoiceService:
                     "payer_name": counterparty_names.get(invoice.payer_id),
                     "status": invoice.status,
                     "status_name": self.repo.get_status_name(invoice.status),
+                    "total_amount": invoice.total_amount,
                     "created_at": invoice.created_at,
                     "created_by": invoice.created_by,
                     "created_by_user": self._map_user(users_by_id.get(invoice.created_by)),
                     "approvals": grouped_logs["approval"],
                     "planning": grouped_logs["planning"],
                     "payment": grouped_logs["payment"],
+                    "payments": [
+                        self._map_payment(payment, users_by_id)
+                        for payment in payments_by_invoice_id.get(invoice.id, [])
+                    ],
                 }
             )
         return result
@@ -689,6 +785,24 @@ class InvoiceService:
             "surname": user.surname,
             "patronymic": user.patronymic,
             "short_fio": short_fio,
+        }
+
+    def _map_payment(self, payment, users_by_id: dict[str, object]):
+        return {
+            "id": payment.id,
+            "invoice_id": payment.invoice_id,
+            "value": payment.value,
+            "date_plan": payment.date_plan,
+            "created_by": payment.created_by,
+            "created_by_user": self._map_user(users_by_id.get(payment.created_by)),
+            "created_at": payment.created_at,
+            "updated_at": payment.updated_at,
+            "paid": payment.paid,
+            "paid_type": payment.paid_type,
+            "paid_by": payment.paid_by,
+            "paid_by_user": self._map_user(users_by_id.get(payment.paid_by)),
+            "paid_at": payment.paid_at,
+            "file_id": payment.file_id,
         }
 
     @staticmethod

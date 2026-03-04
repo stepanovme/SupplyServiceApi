@@ -8,9 +8,13 @@ from app.database import DbAuthSession, DbReferenceSession, DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.invoice import (
     InvoiceCreate,
+    InvoiceLogCreate,
+    InvoiceLogUpdate,
     InvoiceItemCreate,
     InvoiceItemUpdate,
     InvoiceParseRequest,
+    InvoicePaymentCreate,
+    InvoicePaymentUpdate,
     InvoiceUpdate,
 )
 from app.models.session import SessionDB
@@ -255,3 +259,73 @@ def delete_invoice_item(
     service = build_invoice_service(supply_db, auth_db, reference_db)
     service.delete_invoice_item(invoice_id, item_id)
     return None
+
+
+@invoices_router.post(
+    "/{invoice_id}/logs",
+    status_code=status.HTTP_201_CREATED,
+    summary="Добавить запись согласования счета",
+)
+def create_invoice_log(
+    invoice_id: int,
+    payload: InvoiceLogCreate,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.create_invoice_log(invoice_id, payload)
+
+
+@invoices_router.patch(
+    "/{invoice_id}/logs/{log_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Изменить запись согласования счета",
+)
+def update_invoice_log(
+    invoice_id: int,
+    log_id: str,
+    payload: InvoiceLogUpdate,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.update_invoice_log(invoice_id, log_id, payload)
+
+
+@invoices_router.post(
+    "/{invoice_id}/payments",
+    status_code=status.HTTP_201_CREATED,
+    summary="Добавить оплату счета",
+)
+def create_invoice_payment(
+    invoice_id: int,
+    payload: InvoicePaymentCreate,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.create_invoice_payment(invoice_id, payload, str(session.user_id))
+
+
+@invoices_router.patch(
+    "/{invoice_id}/payments/{payment_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Изменить оплату счета",
+)
+def update_invoice_payment(
+    invoice_id: int,
+    payment_id: str,
+    payload: InvoicePaymentUpdate,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.update_invoice_payment(invoice_id, payment_id, payload)

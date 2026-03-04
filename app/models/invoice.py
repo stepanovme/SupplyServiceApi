@@ -1,5 +1,6 @@
 from datetime import date as dt_date
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
@@ -57,6 +58,23 @@ class InvoiceLog(SupplyBase):
     type = Column(String(20), nullable=True)
     status_name = Column(String(20), nullable=True)
     date_response = Column(DateTime, nullable=True)
+
+
+class InvoicePayment(SupplyBase):
+    __tablename__ = "invoice_payment"
+
+    id = Column(CHAR(36), primary_key=True)
+    invoice_id = Column(Integer, ForeignKey("invoice.id"), nullable=False, index=True)
+    value = Column(Float, nullable=True)
+    date_plan = Column(Date, nullable=True)
+    created_by = Column(CHAR(36), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=True)
+    paid = Column(Float, nullable=True)
+    paid_type = Column(String(30), nullable=True)
+    paid_by = Column(CHAR(36), nullable=True, index=True)
+    paid_at = Column(DateTime, nullable=True)
+    file_id = Column(CHAR(36), nullable=True, index=True)
 
 
 class InvoiceCreate(BaseModel):
@@ -123,3 +141,37 @@ class InvoiceItemUpdate(BaseModel):
 
 class InvoiceParseRequest(BaseModel):
     file_path: str
+
+
+class InvoiceLogCreate(BaseModel):
+    user_id: str
+    type: Literal["approval", "planing", "payment"] | None = Field(default=None)
+    status_name: Literal["pending", "approved", "rejected"] | None = Field(default=None)
+    date_response: datetime | None = Field(default=None)
+
+
+class InvoiceLogUpdate(BaseModel):
+    user_id: str | None = Field(default=None)
+    type: Literal["approval", "planing", "payment"] | None = Field(default=None)
+    status_name: Literal["pending", "approved", "rejected"] | None = Field(default=None)
+    date_response: datetime | None = Field(default=None)
+
+
+class InvoicePaymentCreate(BaseModel):
+    value: float | None = Field(default=None)
+    date_plan: dt_date | None = Field(default=None)
+    paid: float | None = Field(default=None)
+    paid_type: Literal["account", "cash", "mutual settlement", "by debit card"] | None = Field(default=None)
+    paid_by: str | None = Field(default=None)
+    paid_at: datetime | None = Field(default=None)
+    file_id: str | None = Field(default=None)
+
+
+class InvoicePaymentUpdate(BaseModel):
+    value: float | None = Field(default=None)
+    date_plan: dt_date | None = Field(default=None)
+    paid: float | None = Field(default=None)
+    paid_type: Literal["account", "cash", "mutual settlement", "by debit card"] | None = Field(default=None)
+    paid_by: str | None = Field(default=None)
+    paid_at: datetime | None = Field(default=None)
+    file_id: str | None = Field(default=None)
