@@ -452,7 +452,7 @@ class InvoiceService:
         return {
             "id": invoice.id,
             "object_levels_id": object_levels_id,
-            "project_id": project["id"] if project else None,
+            "project_id": project.id if project else None,
             "project_name": project_name,
             "num": invoice.num,
             "date": invoice.date,
