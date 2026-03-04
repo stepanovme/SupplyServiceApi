@@ -3,8 +3,8 @@ from datetime import datetime
 
 from sqlalchemy.orm import Session
 
-from app.models.invoice import Invoice, InvoiceItem
-from app.models.supply_request import StatusRef, UnitRef
+from app.models.invoice import Invoice, InvoiceItem, InvoiceLog
+from app.models.supply_request import StatusRef, SupplyRequest, UnitRef
 
 
 class InvoiceRepository:
@@ -20,6 +20,14 @@ class InvoiceRepository:
 
     def get_invoice_by_id(self, invoice_id: int) -> Invoice | None:
         return self.db.query(Invoice).filter(Invoice.id == invoice_id).first()
+
+    def get_invoices(self) -> list[Invoice]:
+        return self.db.query(Invoice).order_by(Invoice.id.desc()).all()
+
+    def get_invoices_by_ids(self, invoice_ids: list[int]) -> list[Invoice]:
+        if not invoice_ids:
+            return []
+        return self.db.query(Invoice).filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.id.desc()).all()
 
     def save_invoice(self, row: Invoice) -> Invoice:
         row.updated_at = datetime.utcnow()
@@ -37,6 +45,30 @@ class InvoiceRepository:
             .filter(InvoiceItem.invoice_id == invoice_id)
             .all()
         )
+
+    def get_request_names_by_ids(self, request_ids: list[int]) -> dict[int, str | None]:
+        if not request_ids:
+            return {}
+        rows = (
+            self.db.query(SupplyRequest.id, SupplyRequest.name)
+            .filter(SupplyRequest.id.in_(list({rid for rid in request_ids if rid is not None})))
+            .all()
+        )
+        return {row_id: row_name for row_id, row_name in rows}
+
+    def get_requests_meta_by_ids(self, request_ids: list[int]) -> dict[int, dict]:
+        unique_ids = list({rid for rid in request_ids if rid is not None})
+        if not unique_ids:
+            return {}
+        rows = (
+            self.db.query(SupplyRequest.id, SupplyRequest.name, SupplyRequest.object_levels_id)
+            .filter(SupplyRequest.id.in_(unique_ids))
+            .all()
+        )
+        return {
+            row_id: {"name": row_name, "object_levels_id": object_levels_id}
+            for row_id, row_name, object_levels_id in rows
+        }
 
     def create_invoice_item(self, invoice_id: int, payload: dict) -> InvoiceItem:
         item = InvoiceItem(id=str(uuid.uuid4()), invoice_id=invoice_id, **payload)
@@ -71,6 +103,32 @@ class InvoiceRepository:
             .delete(synchronize_session=False)
         )
         self.db.commit()
+
+    def get_invoice_logs(self, invoice_id: int) -> list[InvoiceLog]:
+        return (
+            self.db.query(InvoiceLog)
+            .filter(InvoiceLog.invoice_id == invoice_id)
+            .order_by(InvoiceLog.id.asc())
+            .all()
+        )
+
+    def get_invoice_logs_by_user(self, user_id: str) -> list[InvoiceLog]:
+        return (
+            self.db.query(InvoiceLog)
+            .filter(InvoiceLog.user_id == user_id)
+            .order_by(InvoiceLog.id.desc())
+            .all()
+        )
+
+    def get_invoice_logs_by_invoice_ids(self, invoice_ids: list[int]) -> list[InvoiceLog]:
+        if not invoice_ids:
+            return []
+        return (
+            self.db.query(InvoiceLog)
+            .filter(InvoiceLog.invoice_id.in_(invoice_ids))
+            .order_by(InvoiceLog.id.asc())
+            .all()
+        )
 
     def get_status_name(self, status_id: str | None) -> str | None:
         if not status_id:

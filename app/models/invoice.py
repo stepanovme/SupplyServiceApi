@@ -11,6 +11,7 @@ class Invoice(SupplyBase):
     __tablename__ = "invoice"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    object_levels_id = Column(CHAR(36), nullable=True, index=True)
     num = Column(String(100), nullable=True)
     date = Column(Date, nullable=True)
     request_id = Column(Integer, nullable=True, index=True)
@@ -47,7 +48,19 @@ class InvoiceItem(SupplyBase):
     converted_quantity = Column(Float, nullable=True)
 
 
+class InvoiceLog(SupplyBase):
+    __tablename__ = "invoice_log"
+
+    id = Column(CHAR(36), primary_key=True)
+    user_id = Column(CHAR(36), nullable=False, index=True)
+    invoice_id = Column(Integer, ForeignKey("invoice.id"), nullable=False, index=True)
+    type = Column(String(20), nullable=True)
+    status_name = Column(String(20), nullable=True)
+    date_response = Column(DateTime, nullable=True)
+
+
 class InvoiceCreate(BaseModel):
+    object_levels_id: str | None = Field(default=None)
     num: str | None = Field(default=None)
     date: dt_date | None = Field(default=None)
     request_id: int | None = Field(default=None)
@@ -66,6 +79,7 @@ class InvoiceCreate(BaseModel):
 
 
 class InvoiceUpdate(BaseModel):
+    object_levels_id: str | None = Field(default=None)
     num: str | None = Field(default=None)
     date: dt_date | None = Field(default=None)
     request_id: int | None = Field(default=None)

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import uuid
+from collections import defaultdict
 from datetime import date as dt_date
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from pathlib import Path
@@ -19,7 +20,10 @@ from app.models.invoice import (
 )
 from app.repositories.invoice_repository import InvoiceRepository
 from app.repositories.counterparty_repository import CounterpartyRepository
+from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_file_repository import RequestFileRepository
+from app.services.project_name_builder import build_project_name, load_project_reference_maps
 
 DEFAULT_NEW_STATUS_ID = "1ff34436-1312-11f1-aa8c-bc241127d0bd"
 INVOICE_FILE_TYPE_ID = "4594a94b-140f-11f1-aa8c-bc241127d0bd"
@@ -35,10 +39,30 @@ class InvoiceService:
         repo: InvoiceRepository,
         file_repo: RequestFileRepository | None = None,
         counterparty_repo: CounterpartyRepository | None = None,
+        auth_user_repo: AuthUserRepository | None = None,
+        reference_repo: ReferenceObjectRepository | None = None,
     ) -> None:
         self.repo = repo
         self.file_repo = file_repo
         self.counterparty_repo = counterparty_repo
+        self.auth_user_repo = auth_user_repo
+        self.reference_repo = reference_repo
+
+    def get_all(self):
+        invoices = self.repo.get_invoices()
+        return self._serialize_invoice_list(invoices)
+
+    def get_available_for_user(self, user_id: str):
+        logs = self.repo.get_invoice_logs_by_user(user_id)
+        invoice_ids = {log.invoice_id for log in logs}
+
+        all_invoices = self.repo.get_invoices()
+        for invoice in all_invoices:
+            if invoice.created_by == user_id:
+                invoice_ids.add(invoice.id)
+
+        invoices = self.repo.get_invoices_by_ids(list(invoice_ids))
+        return self._serialize_invoice_list(invoices)
 
     def parse_invoice_file_and_update(self, invoice_id: int, file_path: str, user_id: str):
         invoice = self.repo.get_invoice_by_id(invoice_id)
@@ -177,6 +201,7 @@ class InvoiceService:
 
     def create_invoice(self, payload: InvoiceCreate, user_id: str):
         data = payload.model_dump(exclude_unset=True)
+        data = self._apply_request_object_levels_fallback(data)
         data.setdefault("is_delivery_included", False)
         data.setdefault("prepayment_percent", 0)
         data.setdefault("due_days", 0)
@@ -278,6 +303,7 @@ class InvoiceService:
             raise
 
         data = payload.model_dump(exclude_unset=True)
+        data = self._apply_request_object_levels_fallback(data)
         data["file_id"] = created_file.id
         data.setdefault("is_delivery_included", False)
         data.setdefault("prepayment_percent", 0)
@@ -312,6 +338,7 @@ class InvoiceService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
         data = payload.model_dump(exclude_unset=True)
+        data = self._apply_request_object_levels_fallback(data, current_invoice=invoice)
         for key, value in data.items():
             setattr(invoice, key, value)
 
@@ -408,17 +435,37 @@ class InvoiceService:
         items = self.repo.get_invoice_items(invoice_id)
         unit_ids = [item.unit_id for item in items if item.unit_id]
         unit_names = self.repo.get_unit_names(unit_ids)
+        request_meta = self.repo.get_requests_meta_by_ids(
+            [invoice.request_id] if invoice.request_id is not None else []
+        )
+        object_levels_id = invoice.object_levels_id
+        if not object_levels_id and invoice.request_id is not None:
+            object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
+        project_name, project = self._build_project_block(object_levels_id)
+
+        logs = self.repo.get_invoice_logs(invoice.id)
+        log_user_ids = [log.user_id for log in logs if log.user_id]
+        users_by_id = self._get_users_map(log_user_ids + ([invoice.created_by] if invoice.created_by else []))
+
+        grouped_logs = self._group_invoice_logs(logs, users_by_id)
+
         return {
             "id": invoice.id,
+            "object_levels_id": object_levels_id,
+            "project_id": project["id"] if project else None,
+            "project_name": project_name,
             "num": invoice.num,
             "date": invoice.date,
             "request_id": invoice.request_id,
+            "request_name": request_meta.get(invoice.request_id, {}).get("name"),
             "file_id": invoice.file_id,
             "file": self._build_file_payload(invoice.file_id),
             "provider_id": invoice.provider_id,
             "provider": self._build_counterparty_payload(invoice.provider_id),
+            "provider_name": self._build_counterparty_name(invoice.provider_id),
             "payer_id": invoice.payer_id,
             "payer": self._build_counterparty_payload(invoice.payer_id),
+            "payer_name": self._build_counterparty_name(invoice.payer_id),
             "is_delivery_included": invoice.is_delivery_included,
             "prepayment_percent": invoice.prepayment_percent,
             "due_days": invoice.due_days,
@@ -432,6 +479,10 @@ class InvoiceService:
             "created_at": invoice.created_at,
             "updated_at": invoice.updated_at,
             "created_by": invoice.created_by,
+            "created_by_user": self._map_user(users_by_id.get(invoice.created_by)),
+            "approvals": grouped_logs["approval"],
+            "planning": grouped_logs["planning"],
+            "payment": grouped_logs["payment"],
             "items": [self._item_to_dict(item, unit_names) for item in items],
         }
 
@@ -473,6 +524,171 @@ class InvoiceService:
             "mime_type": file_row.mime_type,
             "extension": file_row.extension,
             "file_size": file_row.file_size,
+        }
+
+    def _serialize_invoice_list(self, invoices):
+        if not invoices:
+            return []
+
+        request_ids = [invoice.request_id for invoice in invoices if invoice.request_id is not None]
+        request_meta = self.repo.get_requests_meta_by_ids(request_ids)
+
+        counterparty_ids = set()
+        user_ids = set()
+        object_level_ids = []
+        invoice_ids = []
+        for invoice in invoices:
+            invoice_ids.append(invoice.id)
+            if invoice.provider_id:
+                counterparty_ids.add(invoice.provider_id)
+            if invoice.payer_id:
+                counterparty_ids.add(invoice.payer_id)
+            if invoice.created_by:
+                user_ids.add(invoice.created_by)
+            object_levels_id = invoice.object_levels_id
+            if not object_levels_id and invoice.request_id is not None:
+                object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
+            if object_levels_id:
+                object_level_ids.append(object_levels_id)
+
+        logs = self.repo.get_invoice_logs_by_invoice_ids(invoice_ids)
+        logs_by_invoice_id = defaultdict(list)
+        for log in logs:
+            logs_by_invoice_id[log.invoice_id].append(log)
+            if log.user_id:
+                user_ids.add(log.user_id)
+
+        counterparty_names = self.reference_repo.get_counterparty_names(list(counterparty_ids)) if self.reference_repo else {}
+        users_by_id = self._get_users_map(list(user_ids))
+
+        levels_by_id, objects_by_id, contracts_by_id, work_types_by_id = load_project_reference_maps(
+            self.reference_repo,
+            object_level_ids,
+        ) if self.reference_repo else ({}, {}, {}, {})
+
+        result = []
+        for invoice in invoices:
+            object_levels_id = invoice.object_levels_id
+            if not object_levels_id and invoice.request_id is not None:
+                object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
+            project_name = build_project_name(
+                object_levels_id,
+                levels_by_id,
+                objects_by_id,
+                contracts_by_id,
+                work_types_by_id,
+            ) if self.reference_repo else None
+            grouped_logs = self._group_invoice_logs(logs_by_invoice_id.get(invoice.id, []), users_by_id)
+            result.append(
+                {
+                    "id": invoice.id,
+                    "object_levels_id": object_levels_id,
+                    "project_name": project_name,
+                    "num": invoice.num,
+                    "date": invoice.date,
+                    "request_id": invoice.request_id,
+                    "request_name": request_meta.get(invoice.request_id, {}).get("name"),
+                    "provider_id": invoice.provider_id,
+                    "provider_name": counterparty_names.get(invoice.provider_id),
+                    "payer_id": invoice.payer_id,
+                    "payer_name": counterparty_names.get(invoice.payer_id),
+                    "status": invoice.status,
+                    "status_name": self.repo.get_status_name(invoice.status),
+                    "created_at": invoice.created_at,
+                    "created_by": invoice.created_by,
+                    "created_by_user": self._map_user(users_by_id.get(invoice.created_by)),
+                    "approvals": grouped_logs["approval"],
+                    "planning": grouped_logs["planning"],
+                    "payment": grouped_logs["payment"],
+                }
+            )
+        return result
+
+    def _build_project_block(self, object_levels_id: str | None):
+        if not self.reference_repo or not object_levels_id:
+            return None, None
+
+        levels_by_id, objects_by_id, contracts_by_id, work_types_by_id = load_project_reference_maps(
+            self.reference_repo,
+            [object_levels_id],
+        )
+        project_name = build_project_name(
+            object_levels_id,
+            levels_by_id,
+            objects_by_id,
+            contracts_by_id,
+            work_types_by_id,
+        )
+        level = levels_by_id.get(object_levels_id)
+        project = objects_by_id.get(level.object_id) if level else None
+        return project_name, project
+
+    def _group_invoice_logs(self, logs, users_by_id: dict[str, object]):
+        grouped = defaultdict(list)
+        for log in logs:
+            log_type = (log.type or "").lower()
+            if log_type == "planing":
+                log_type = "planning"
+            if log_type not in {"approval", "planning", "payment"}:
+                continue
+            grouped[log_type].append(
+                {
+                    "id": log.id,
+                    "user_id": log.user_id,
+                    "user": self._map_user(users_by_id.get(log.user_id)),
+                    "status_name": log.status_name,
+                    "date_response": log.date_response,
+                    "answer": log.status_name,
+                }
+            )
+        return {
+            "approval": grouped["approval"],
+            "planning": grouped["planning"],
+            "payment": grouped["payment"],
+        }
+
+    def _build_counterparty_name(self, counterparty_id: str | None) -> str | None:
+        if not counterparty_id or not self.reference_repo:
+            return None
+        mapping = self.reference_repo.get_counterparty_names([counterparty_id])
+        return mapping.get(counterparty_id)
+
+    def _get_users_map(self, user_ids: list[str]):
+        if not self.auth_user_repo:
+            return {}
+        users = self.auth_user_repo.get_by_ids([user_id for user_id in user_ids if user_id])
+        return {user.id: user for user in users}
+
+    def _apply_request_object_levels_fallback(self, data: dict, current_invoice=None) -> dict:
+        request_id = data.get("request_id")
+        if request_id is None and current_invoice is not None:
+            request_id = current_invoice.request_id
+
+        object_levels_id = data.get("object_levels_id")
+        if object_levels_id is None and current_invoice is not None:
+            object_levels_id = current_invoice.object_levels_id
+
+        if object_levels_id or request_id is None:
+            return data
+
+        meta = self.repo.get_requests_meta_by_ids([request_id]).get(request_id)
+        if meta and meta.get("object_levels_id"):
+            data["object_levels_id"] = meta["object_levels_id"]
+        return data
+
+    @staticmethod
+    def _map_user(user):
+        if not user:
+            return None
+        name_initial = f"{user.name[0]}." if user.name else ""
+        patronymic_initial = f"{user.patronymic[0]}." if user.patronymic else ""
+        short_fio = " ".join(part for part in [user.surname, name_initial, patronymic_initial] if part).strip()
+        return {
+            "id": user.id,
+            "name": user.name,
+            "surname": user.surname,
+            "patronymic": user.patronymic,
+            "short_fio": short_fio,
         }
 
     @staticmethod
