@@ -157,6 +157,16 @@ class NomenclatureUpdate(BaseModel):
     weight: float | None = Field(default=None)
 
 
+class WarehouseCategoryCreate(BaseModel):
+    name: str
+    parent_id: str | None = Field(default=None)
+
+
+class WarehouseCategoryUpdate(BaseModel):
+    name: str | None = Field(default=None)
+    parent_id: str | None = Field(default=None)
+
+
 class RequestApproverCreate(BaseModel):
     user_id: str
     status_name: Literal["pending", "approved", "rejected"] = Field(default="pending")

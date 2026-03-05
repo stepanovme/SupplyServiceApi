@@ -15,6 +15,24 @@ class CatalogRepository:
     def get_warehouse_categories(self) -> list[WarehouseCategoryRef]:
         return self.db.query(WarehouseCategoryRef).order_by(WarehouseCategoryRef.name.asc()).all()
 
+    def get_warehouse_category_by_id(self, category_id: str) -> WarehouseCategoryRef | None:
+        return self.db.query(WarehouseCategoryRef).filter(WarehouseCategoryRef.id == category_id).first()
+
+    def create_warehouse_category(self, payload: dict) -> WarehouseCategoryRef:
+        item = WarehouseCategoryRef(
+            id=str(uuid.uuid4()),
+            **payload,
+        )
+        self.db.add(item)
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
+    def save_warehouse_category(self, item: WarehouseCategoryRef) -> WarehouseCategoryRef:
+        self.db.commit()
+        self.db.refresh(item)
+        return item
+
     def get_nomenclature(self, search: str | None = None) -> list[NomenclatureRef]:
         query = self.db.query(NomenclatureRef)
         if search:

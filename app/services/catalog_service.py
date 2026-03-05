@@ -1,6 +1,11 @@
 from fastapi import HTTPException, status
 
-from app.models.supply_request import NomenclatureCreate, NomenclatureUpdate
+from app.models.supply_request import (
+    NomenclatureCreate,
+    NomenclatureUpdate,
+    WarehouseCategoryCreate,
+    WarehouseCategoryUpdate,
+)
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.request_repository import RequestRepository
 
@@ -22,6 +27,34 @@ class CatalogService:
             }
             for item in self.repo.get_warehouse_categories()
         ]
+
+    def create_warehouse_category(self, payload: WarehouseCategoryCreate):
+        data = payload.model_dump(exclude_unset=True)
+        item = self.repo.create_warehouse_category(data)
+        return {
+            "id": item.id,
+            "name": item.name,
+            "parent_id": item.parent_id,
+        }
+
+    def update_warehouse_category(self, category_id: str, payload: WarehouseCategoryUpdate):
+        item = self.repo.get_warehouse_category_by_id(category_id)
+        if not item:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Warehouse category not found",
+            )
+
+        data = payload.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(item, key, value)
+
+        updated = self.repo.save_warehouse_category(item)
+        return {
+            "id": updated.id,
+            "name": updated.name,
+            "parent_id": updated.parent_id,
+        }
 
     def get_nomenclature(self, search: str | None = None):
         rows = self.repo.get_nomenclature(search)

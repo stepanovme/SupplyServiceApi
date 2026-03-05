@@ -3,7 +3,12 @@ from fastapi import APIRouter, Depends, Query, status
 from app.database import DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.session import SessionDB
-from app.models.supply_request import NomenclatureCreate, NomenclatureUpdate
+from app.models.supply_request import (
+    NomenclatureCreate,
+    NomenclatureUpdate,
+    WarehouseCategoryCreate,
+    WarehouseCategoryUpdate,
+)
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.request_repository import RequestRepository
 from app.services.catalog_service import CatalogService
@@ -35,6 +40,35 @@ def get_warehouse_categories(
 ):
     service = CatalogService(CatalogRepository(db), RequestRepository(db))
     return service.get_warehouse_categories()
+
+
+@catalog_router.post(
+    "/warehouse-categories",
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать товарную категорию",
+)
+def create_warehouse_category(
+    payload: WarehouseCategoryCreate,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = CatalogService(CatalogRepository(db), RequestRepository(db))
+    return service.create_warehouse_category(payload)
+
+
+@catalog_router.patch(
+    "/warehouse-categories/{category_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Обновить товарную категорию",
+)
+def update_warehouse_category(
+    category_id: str,
+    payload: WarehouseCategoryUpdate,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = CatalogService(CatalogRepository(db), RequestRepository(db))
+    return service.update_warehouse_category(category_id, payload)
 
 
 @catalog_router.get(
