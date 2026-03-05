@@ -1,3 +1,6 @@
+from fastapi import HTTPException, status
+
+from app.models.supply_request import NomenclatureCreate, NomenclatureUpdate
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.request_repository import RequestRepository
 
@@ -22,7 +25,43 @@ class CatalogService:
 
     def get_nomenclature(self, search: str | None = None):
         rows = self.repo.get_nomenclature(search)
+        return self._serialize_nomenclature_rows(rows)
 
+    def get_nomenclature_by_id(self, nomenclature_id: str):
+        row = self.repo.get_nomenclature_by_id(nomenclature_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nomenclature not found")
+        rows = self._serialize_nomenclature_rows([row])
+        return rows[0]
+
+    def create_nomenclature(self, payload: NomenclatureCreate, user_id: str):
+        data = payload.model_dump(exclude_unset=True)
+        data["created_by"] = user_id
+        row = self.repo.create_nomenclature(data)
+        rows = self._serialize_nomenclature_rows([row])
+        return rows[0]
+
+    def update_nomenclature(self, nomenclature_id: str, payload: NomenclatureUpdate):
+        row = self.repo.get_nomenclature_by_id(nomenclature_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nomenclature not found")
+
+        data = payload.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(row, key, value)
+
+        updated = self.repo.save_nomenclature(row)
+        rows = self._serialize_nomenclature_rows([updated])
+        return rows[0]
+
+    def delete_nomenclature(self, nomenclature_id: str):
+        row = self.repo.get_nomenclature_by_id(nomenclature_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Nomenclature not found")
+        self.repo.delete_nomenclature(row)
+        return None
+
+    def _serialize_nomenclature_rows(self, rows):
         unit_ids = [item.unit_id for item in rows if item.unit_id]
         category_ids = [item.warehouse_category_id for item in rows if item.warehouse_category_id]
         units = self.request_repo.get_units_by_ids(unit_ids)
@@ -55,6 +94,7 @@ class CatalogService:
                     "height": item.height,
                     "weight": item.weight,
                     "created_at": item.created_at,
+                    "created_by": item.created_by,
                 }
             )
 

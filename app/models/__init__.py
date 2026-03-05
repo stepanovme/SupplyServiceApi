@@ -15,3 +15,4 @@ from app.models.supply_request import (
     UnitRef,
     WarehouseCategoryRef,
 )
+from app.models.warehouse import Warehouse

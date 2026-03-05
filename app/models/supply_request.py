@@ -77,6 +77,7 @@ class NomenclatureRef(SupplyBase):
     height = Column(Float, nullable=True)
     weight = Column(Float, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_by = Column(CHAR(36), nullable=True, index=True)
 
 
 class WarehouseCategoryRef(SupplyBase):
@@ -130,6 +131,30 @@ class RequestItemUpdate(BaseModel):
     quantity: float | None = Field(default=None)
     warehouse_category_id: str | None = Field(default=None)
     comment: str | None = Field(default=None)
+
+
+class NomenclatureCreate(BaseModel):
+    warehouse_category_id: str
+    name: str
+    description: str | None = Field(default=None)
+    article: str | None = Field(default=None)
+    unit_id: str
+    length: float | None = Field(default=None)
+    width: float | None = Field(default=None)
+    height: float | None = Field(default=None)
+    weight: float | None = Field(default=None)
+
+
+class NomenclatureUpdate(BaseModel):
+    warehouse_category_id: str | None = Field(default=None)
+    name: str | None = Field(default=None)
+    description: str | None = Field(default=None)
+    article: str | None = Field(default=None)
+    unit_id: str | None = Field(default=None)
+    length: float | None = Field(default=None)
+    width: float | None = Field(default=None)
+    height: float | None = Field(default=None)
+    weight: float | None = Field(default=None)
 
 
 class RequestApproverCreate(BaseModel):

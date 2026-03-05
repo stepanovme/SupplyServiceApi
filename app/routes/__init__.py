@@ -9,6 +9,7 @@ from app.routes.request_approvers_routes import request_approvers_router
 from app.routes.request_items_routes import request_items_router
 from app.routes.request_objects_routes import request_objects_router
 from app.routes.requests_routes import requests_router
+from app.routes.warehouses_routes import warehouses_router
 
 main_router = APIRouter(prefix="/api/supply")
 
@@ -20,4 +21,5 @@ main_router.include_router(request_approvers_router)
 main_router.include_router(requests_router)
 main_router.include_router(request_items_router)
 main_router.include_router(request_objects_router)
+main_router.include_router(warehouses_router)
 main_router.include_router(catalog_router)

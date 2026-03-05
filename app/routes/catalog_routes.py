@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.database import DbSupplySession
 from app.middleware.auth_middleware import get_session
+from app.models.session import SessionDB
+from app.models.supply_request import NomenclatureCreate, NomenclatureUpdate
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.request_repository import RequestRepository
 from app.services.catalog_service import CatalogService
@@ -47,3 +49,60 @@ def get_nomenclature(
 ):
     service = CatalogService(CatalogRepository(db), RequestRepository(db))
     return service.get_nomenclature(search)
+
+
+@catalog_router.get(
+    "/nomenclature/{nomenclature_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Получить номенклатуру по id",
+)
+def get_nomenclature_by_id(
+    nomenclature_id: str,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = CatalogService(CatalogRepository(db), RequestRepository(db))
+    return service.get_nomenclature_by_id(nomenclature_id)
+
+
+@catalog_router.post(
+    "/nomenclature",
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать номенклатуру",
+)
+def create_nomenclature(
+    payload: NomenclatureCreate,
+    db: DbSupplySession,
+    session: SessionDB = Depends(get_session),
+):
+    service = CatalogService(CatalogRepository(db), RequestRepository(db))
+    return service.create_nomenclature(payload, str(session.user_id))
+
+
+@catalog_router.patch(
+    "/nomenclature/{nomenclature_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Обновить номенклатуру",
+)
+def update_nomenclature(
+    nomenclature_id: str,
+    payload: NomenclatureUpdate,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = CatalogService(CatalogRepository(db), RequestRepository(db))
+    return service.update_nomenclature(nomenclature_id, payload)
+
+
+@catalog_router.delete(
+    "/nomenclature/{nomenclature_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить номенклатуру",
+)
+def delete_nomenclature(
+    nomenclature_id: str,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    service = CatalogService(CatalogRepository(db), RequestRepository(db))
+    return service.delete_nomenclature(nomenclature_id)
