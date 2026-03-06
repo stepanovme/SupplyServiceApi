@@ -16,3 +16,4 @@ from app.models.supply_request import (
     WarehouseCategoryRef,
 )
 from app.models.warehouse import Warehouse
+from app.models.warehouse_receipt import WarehouseReceipt, WarehouseReceiptItem
