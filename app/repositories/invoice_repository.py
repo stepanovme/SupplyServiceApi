@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy.orm import Session
 
 from app.models.invoice import Invoice, InvoiceItem, InvoiceLog, InvoicePayment
+from app.models.item_mapping import ItemMapping
 from app.models.supply_request import StatusRef, SupplyRequest, UnitRef
 
 
@@ -43,6 +44,34 @@ class InvoiceRepository:
         return (
             self.db.query(InvoiceItem)
             .filter(InvoiceItem.invoice_id == invoice_id)
+            .all()
+        )
+
+    def get_chat_ids_by_invoice(self, invoice_ids: list[int]) -> dict[int, int]:
+        from app.models.chat import Chat
+        if not invoice_ids:
+            return {}
+        chats = (
+            self.db.query(Chat)
+            .filter(Chat.type == "invoice", Chat.invoice_id.in_(invoice_ids))
+            .all()
+        )
+        return {chat.invoice_id: chat.id for chat in chats if chat.invoice_id}
+
+    def get_chat_id_by_invoice(self, invoice_id: int) -> int | None:
+        from app.models.chat import Chat
+        chat = (
+            self.db.query(Chat)
+            .filter(Chat.type == "invoice", Chat.invoice_id == invoice_id)
+            .first()
+        )
+        return chat.id if chat else None
+
+    def get_item_mappings_by_invoice_id(self, invoice_id: int) -> list[ItemMapping]:
+        return (
+            self.db.query(ItemMapping)
+            .filter(ItemMapping.invoice_id == invoice_id)
+            .order_by(ItemMapping.created_at.desc())
             .all()
         )
 
@@ -134,6 +163,10 @@ class InvoiceRepository:
         self.db.refresh(row)
         return row
 
+    def delete_invoice_log(self, row: InvoiceLog) -> None:
+        self.db.delete(row)
+        self.db.commit()
+
     def get_invoice_logs_by_user(self, user_id: str) -> list[InvoiceLog]:
         return (
             self.db.query(InvoiceLog)
@@ -183,6 +216,10 @@ class InvoiceRepository:
         self.db.refresh(row)
         return row
 
+    def delete_invoice_payment(self, row: InvoicePayment) -> None:
+        self.db.delete(row)
+        self.db.commit()
+
     def get_invoice_payments_by_invoice_ids(self, invoice_ids: list[int]) -> list[InvoicePayment]:
         if not invoice_ids:
             return []
@@ -198,6 +235,33 @@ class InvoiceRepository:
             return None
         row = self.db.query(StatusRef).filter(StatusRef.id == status_id).first()
         return row.name if row else None
+
+    def find_duplicate_invoice(
+        self,
+        provider_id: str | None,
+        payer_id: str | None,
+        num: str | None,
+        date,
+    ) -> dict | None:
+        query = self.db.query(Invoice)
+        if provider_id:
+            query = query.filter(Invoice.provider_id == provider_id)
+        if payer_id:
+            query = query.filter(Invoice.payer_id == payer_id)
+        if num:
+            query = query.filter(Invoice.num == num)
+        if date:
+            query = query.filter(Invoice.date == date)
+        row = query.first()
+        if not row:
+            return None
+        return {
+            "id": row.id,
+            "num": row.num,
+            "date": row.date,
+            "provider_id": row.provider_id,
+            "payer_id": row.payer_id,
+        }
 
     def get_unit_names(self, unit_ids: list[str]) -> dict[str, str]:
         if not unit_ids:

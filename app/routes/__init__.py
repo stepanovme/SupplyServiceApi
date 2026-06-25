@@ -1,27 +1,53 @@
 from fastapi import APIRouter
 
 from app.routes.catalog_routes import catalog_router
+from app.routes.chats_routes import chats_router
+from app.routes.deals_routes import deals_router
+from app.routes.deliveries_routes import deliveries_router
+from app.routes.delivery_item_mappings_routes import delivery_item_mappings_router
+from app.routes.invoice_payment_files_routes import invoice_payment_files_router
 from app.routes.invoices_routes import invoices_router
 from app.routes.item_mappings_routes import item_mappings_router
 from app.routes.project_user_roles_routes import project_user_roles_router
 from app.routes.projects_routes import projects_router
 from app.routes.request_approvers_routes import request_approvers_router
+from app.routes.request_suppliers_routes import request_suppliers_router
 from app.routes.request_items_routes import request_items_router
 from app.routes.request_objects_routes import request_objects_router
+from app.routes.request_specifications_routes import request_specifications_router
+from app.routes.request_warehouse_lists_routes import request_warehouse_lists_router
+from app.routes.specifications_routes import specifications_router
 from app.routes.requests_routes import requests_router
+from app.routes.smtp_routes import smtp_router
+from app.routes.upd_documents_routes import upd_documents_router
+from app.routes.upd_item_mappings_routes import upd_item_mappings_router
+from app.routes.mentions_routes import mentions_router
 from app.routes.warehouses_routes import warehouses_router
 from app.routes.warehouse_receipts_routes import warehouse_receipts_router
 
 main_router = APIRouter(prefix="/api/supply")
 
 main_router.include_router(projects_router)
+main_router.include_router(chats_router)
+main_router.include_router(deals_router)
+main_router.include_router(deliveries_router)
+main_router.include_router(delivery_item_mappings_router)
+main_router.include_router(invoice_payment_files_router)
 main_router.include_router(invoices_router)
 main_router.include_router(item_mappings_router)
 main_router.include_router(project_user_roles_router)
 main_router.include_router(request_approvers_router)
+main_router.include_router(request_suppliers_router)
 main_router.include_router(requests_router)
+main_router.include_router(specifications_router)
+main_router.include_router(smtp_router)
 main_router.include_router(request_items_router)
 main_router.include_router(request_objects_router)
+main_router.include_router(request_specifications_router)
+main_router.include_router(request_warehouse_lists_router)
+main_router.include_router(upd_documents_router)
+main_router.include_router(upd_item_mappings_router)
 main_router.include_router(warehouses_router)
 main_router.include_router(warehouse_receipts_router)
 main_router.include_router(catalog_router)
+main_router.include_router(mentions_router)

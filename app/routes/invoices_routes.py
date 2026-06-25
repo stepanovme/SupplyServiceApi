@@ -1,6 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
 
@@ -8,6 +9,7 @@ from app.database import DbAuthSession, DbReferenceSession, DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.invoice import (
     InvoiceCreate,
+    InvoiceDuplicateCheckRequest,
     InvoiceLogCreate,
     InvoiceLogUpdate,
     InvoiceItemCreate,
@@ -21,6 +23,7 @@ from app.models.session import SessionDB
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.invoice_repository import InvoiceRepository
+from app.repositories.project_user_role_repository import ProjectUserRoleRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_file_repository import RequestFileRepository
 from app.services.invoice_service import InvoiceService
@@ -39,6 +42,7 @@ def build_invoice_service(
         CounterpartyRepository(reference_db),
         AuthUserRepository(auth_db),
         ReferenceObjectRepository(reference_db),
+        ProjectUserRoleRepository(supply_db),
     )
 
 
@@ -89,6 +93,31 @@ def create_invoice(
 
 
 @invoices_router.post(
+    "/{invoice_id}/file",
+    status_code=status.HTTP_200_OK,
+    summary="Загрузить или заменить файл счёта",
+)
+async def upload_invoice_file(
+    invoice_id: int,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+    file: UploadFile = File(...),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    file_bytes = await file.read()
+    return await run_in_threadpool(
+        service.upload_invoice_file,
+        invoice_id,
+        file_bytes,
+        file.filename or "file",
+        file.content_type or "application/octet-stream",
+        str(session.user_id),
+    )
+
+
+@invoices_router.post(
     "/with-file",
     status_code=status.HTTP_201_CREATED,
     summary="Создать счет сразу с файлом",
@@ -111,12 +140,13 @@ async def create_invoice_with_file(
 
     service = build_invoice_service(supply_db, auth_db, reference_db)
     file_bytes = await file.read()
-    return service.create_invoice_with_file(
-        payload=payload,
-        user_id=str(session.user_id),
-        original_name=file.filename or "file",
-        mime_type=file.content_type or "application/octet-stream",
-        file_bytes=file_bytes,
+    return await run_in_threadpool(
+        service.create_invoice_with_file,
+        payload,
+        str(session.user_id),
+        file.filename or "file",
+        file.content_type or "application/octet-stream",
+        file_bytes,
     )
 
 
@@ -209,6 +239,43 @@ def parse_invoice_file(
 
 
 @invoices_router.post(
+    "/check-duplicate",
+    status_code=status.HTTP_200_OK,
+    summary="Проверить счёт на дубликат по num, date, provider_id, payer_id",
+)
+def check_invoice_duplicate(
+    payload: InvoiceDuplicateCheckRequest,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.check_duplicate(payload.num, payload.date, payload.provider_id, payload.payer_id)
+
+
+@invoices_router.post(
+    "/parse-counterparty",
+    status_code=status.HTTP_200_OK,
+    summary="Распознать ИНН продавца и покупателя из файла и проверить контрагентов в БД",
+)
+async def parse_counterparty_from_file(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+    file: UploadFile = File(...),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    file_bytes = await file.read()
+    return await run_in_threadpool(
+        service.parse_counterparty_from_file,
+        file_bytes,
+        file.filename or "file",
+    )
+
+
+@invoices_router.post(
     "/{invoice_id}/items",
     status_code=status.HTTP_201_CREATED,
     summary="Добавить позицию в счет",
@@ -296,6 +363,24 @@ def update_invoice_log(
     return service.update_invoice_log(invoice_id, log_id, payload)
 
 
+@invoices_router.delete(
+    "/{invoice_id}/logs/{log_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить запись согласования счета",
+)
+def delete_invoice_log(
+    invoice_id: int,
+    log_id: str,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    service.delete_invoice_log(invoice_id, log_id)
+    return None
+
+
 @invoices_router.post(
     "/{invoice_id}/payments",
     status_code=status.HTTP_201_CREATED,
@@ -329,3 +414,21 @@ def update_invoice_payment(
 ):
     service = build_invoice_service(supply_db, auth_db, reference_db)
     return service.update_invoice_payment(invoice_id, payment_id, payload)
+
+
+@invoices_router.delete(
+    "/{invoice_id}/payments/{payment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Удалить оплату счета",
+)
+def delete_invoice_payment(
+    invoice_id: int,
+    payment_id: str,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    service.delete_invoice_payment(invoice_id, payment_id)
+    return None

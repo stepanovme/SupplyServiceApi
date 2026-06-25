@@ -1,8 +1,9 @@
+from datetime import date as dt_date
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import CHAR, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CHAR, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
 
@@ -76,8 +77,22 @@ class NomenclatureRef(SupplyBase):
     width = Column(Float, nullable=True)
     height = Column(Float, nullable=True)
     weight = Column(Float, nullable=True)
+    vat_rate = Column(Integer, nullable=True)
+    price_opt = Column(Float, nullable=True)
+    price_opt2 = Column(Float, nullable=True)
+    price_retail = Column(Float, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_by = Column(CHAR(36), nullable=True, index=True)
+
+
+class WarehousePriceHistory(SupplyBase):
+    __tablename__ = "warehouse_price_history"
+
+    id = Column(CHAR(36), primary_key=True)
+    nomenclature_id = Column(CHAR(36), ForeignKey("nomenclature.id"), nullable=False, index=True)
+    type = Column(String(30), nullable=False)
+    value = Column(Float, nullable=False)
+    date = Column(Date, nullable=False)
 
 
 class WarehouseCategoryRef(SupplyBase):
@@ -143,6 +158,10 @@ class NomenclatureCreate(BaseModel):
     width: float | None = Field(default=None)
     height: float | None = Field(default=None)
     weight: float | None = Field(default=None)
+    vat_rate: int | None = Field(default=None)
+    price_opt: float | None = Field(default=None)
+    price_opt2: float | None = Field(default=None)
+    price_retail: float | None = Field(default=None)
 
 
 class NomenclatureUpdate(BaseModel):
@@ -155,6 +174,24 @@ class NomenclatureUpdate(BaseModel):
     width: float | None = Field(default=None)
     height: float | None = Field(default=None)
     weight: float | None = Field(default=None)
+    vat_rate: int | None = Field(default=None)
+    price_opt: float | None = Field(default=None)
+    price_opt2: float | None = Field(default=None)
+    price_retail: float | None = Field(default=None)
+
+
+class WarehousePriceHistoryCreate(BaseModel):
+    nomenclature_id: str
+    type: Literal["price_purchase", "price_opt", "price_opt2", "price_retail"]
+    value: float
+    date: dt_date
+
+
+class WarehousePriceHistoryUpdate(BaseModel):
+    nomenclature_id: str | None = Field(default=None)
+    type: Literal["price_purchase", "price_opt", "price_opt2", "price_retail"] | None = Field(default=None)
+    value: float | None = Field(default=None)
+    date: dt_date | None = Field(default=None)
 
 
 class WarehouseCategoryCreate(BaseModel):
@@ -165,6 +202,10 @@ class WarehouseCategoryCreate(BaseModel):
 class WarehouseCategoryUpdate(BaseModel):
     name: str | None = Field(default=None)
     parent_id: str | None = Field(default=None)
+
+
+class UnitCreate(BaseModel):
+    name: str
 
 
 class RequestApproverCreate(BaseModel):

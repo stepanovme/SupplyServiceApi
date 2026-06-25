@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
-from app.models.request_file import FileAudit, FileDB, FileType, RequestFile
-from app.models.supply_request import SupplyRequest
+from app.models.request_file import FileAudit, FileDB, FileType, NomenclatureFile, RequestFile
+from app.models.supply_request import NomenclatureRef, SupplyRequest
 
 
 class RequestFileRepository:
@@ -10,6 +10,14 @@ class RequestFileRepository:
 
     def request_exists(self, request_id: int) -> bool:
         return self.db.query(SupplyRequest.id).filter(SupplyRequest.id == request_id).first() is not None
+
+    def nomenclature_exists(self, nomenclature_id: str) -> bool:
+        return (
+            self.db.query(NomenclatureRef.id)
+            .filter(NomenclatureRef.id == nomenclature_id)
+            .first()
+            is not None
+        )
 
     def get_request_attachment_type(self) -> FileType | None:
         return (
@@ -34,6 +42,17 @@ class RequestFileRepository:
     def create_file_and_link(self, file_row: FileDB, request_file_row: RequestFile) -> FileDB:
         self.db.add(file_row)
         self.db.add(request_file_row)
+        self.db.commit()
+        self.db.refresh(file_row)
+        return file_row
+
+    def create_file_and_nomenclature_link(
+        self,
+        file_row: FileDB,
+        nomenclature_file_row: NomenclatureFile,
+    ) -> FileDB:
+        self.db.add(file_row)
+        self.db.add(nomenclature_file_row)
         self.db.commit()
         self.db.refresh(file_row)
         return file_row
@@ -77,6 +96,32 @@ class RequestFileRepository:
             .first()
         )
         return row
+
+    def get_nomenclature_files(self, nomenclature_id: str):
+        return (
+            self.db.query(NomenclatureFile, FileDB, FileType)
+            .join(FileDB, FileDB.id == NomenclatureFile.file_id)
+            .join(FileType, FileType.id == FileDB.file_type_id)
+            .filter(
+                NomenclatureFile.nomenclature_id == nomenclature_id,
+                FileDB.status == "active",
+            )
+            .order_by(NomenclatureFile.created_at.desc())
+            .all()
+        )
+
+    def get_nomenclature_file(self, nomenclature_id: str, file_id: str):
+        return (
+            self.db.query(NomenclatureFile, FileDB, FileType)
+            .join(FileDB, FileDB.id == NomenclatureFile.file_id)
+            .join(FileType, FileType.id == FileDB.file_type_id)
+            .filter(
+                NomenclatureFile.nomenclature_id == nomenclature_id,
+                NomenclatureFile.file_id == file_id,
+                FileDB.status == "active",
+            )
+            .first()
+        )
 
     def add_audit(self, audit: FileAudit) -> None:
         self.db.add(audit)

@@ -1,9 +1,12 @@
 import uuid
 from collections import defaultdict
+from types import SimpleNamespace
 
+from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.models.invoice import Invoice
+from app.models.item_mapping import ItemMapping
 from app.models.supply_request import (
     NomenclatureRef,
     RequestItem,
@@ -13,11 +16,14 @@ from app.models.supply_request import (
     UnitRef,
     WarehouseCategoryRef,
 )
+from app.models.request_warehouse_list import RequestWarehouseList
+from app.models.warehouse import Warehouse
 
 
 class RequestRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
+        self._table_columns_cache: dict[str, set[str]] = {}
 
     def get_all(self):
         requests = self.db.query(SupplyRequest).order_by(SupplyRequest.id.desc()).all()
@@ -35,17 +41,25 @@ class RequestRepository:
         for item in items:
             items_by_request_id[item.request_id].append(item)
 
+        request_warehouse_rows = self.db.query(RequestWarehouseList).filter(RequestWarehouseList.request_id.in_(request_ids)).all()
+        request_warehouse_by_item_id = defaultdict(list)
+        warehouse_ids_for_links = set()
+        for link in request_warehouse_rows:
+            request_warehouse_by_item_id[link.request_item_id].append(link)
+            if link.warehouse_id:
+                warehouse_ids_for_links.add(link.warehouse_id)
+        warehouses_by_id = {}
+        if warehouse_ids_for_links:
+            warehouses = self.db.query(Warehouse).filter(Warehouse.id.in_(list(warehouse_ids_for_links))).all()
+            warehouses_by_id = {row.id: row for row in warehouses}
+
         nomenclature_ids = list({item.nomenclature_id for item in items if item.nomenclature_id})
         unit_ids = {item.unit_id for item in items if item.unit_id}
         warehouse_ids = {item.warehouse_category_id for item in items if item.warehouse_category_id}
 
         nomenclature_rows = []
         if nomenclature_ids:
-            nomenclature_rows = (
-                self.db.query(NomenclatureRef)
-                .filter(NomenclatureRef.id.in_(nomenclature_ids))
-                .all()
-            )
+            nomenclature_rows = self._get_nomenclature_by_ids(nomenclature_ids)
         nomenclature_by_id = {row.id: row for row in nomenclature_rows}
         for nomenclature in nomenclature_rows:
             if nomenclature.unit_id:
@@ -72,6 +86,12 @@ class RequestRepository:
         for log in logs:
             logs_by_request_id[log.request_id].append(log)
 
+        mappings = self.db.query(ItemMapping).filter(ItemMapping.request_id.in_(request_ids)).all()
+        mapped_request_item_ids_by_request_id = defaultdict(set)
+        for mapping in mappings:
+            if mapping.request_item_id and mapping.invoice_item_id:
+                mapped_request_item_ids_by_request_id[mapping.request_id].add(mapping.request_item_id)
+
         invoices = self.db.query(Invoice).filter(Invoice.request_id.in_(request_ids)).all()
         invoices_by_request_id = defaultdict(list)
         for invoice in invoices:
@@ -92,6 +112,10 @@ class RequestRepository:
         for req in requests:
             status = statuses_by_id.get(req.status_id)
             request_items = []
+            warehouse_positions_total = len(items_by_request_id.get(req.id, []))
+            warehouse_positions_linked = 0
+            warehouse_positions_on_stock = 0
+            warehouse_positions_delivered = 0
             for item in items_by_request_id.get(req.id, []):
                 nomenclature = nomenclature_by_id.get(item.nomenclature_id)
                 unit = units_by_id.get(item.unit_id)
@@ -106,6 +130,19 @@ class RequestRepository:
                     if nomenclature and nomenclature.warehouse_category_id
                     else None
                 )
+                linked_rows = request_warehouse_by_item_id.get(item.id, [])
+                linked_warehouses = [warehouses_by_id.get(link.warehouse_id) for link in linked_rows if warehouses_by_id.get(link.warehouse_id)]
+                linked_stock = any(warehouse_row and warehouse_row.type == "warehouse" for warehouse_row in linked_warehouses)
+                linked_delivered = any(warehouse_row and warehouse_row.type == "on-site warehouse" for warehouse_row in linked_warehouses)
+                if linked_rows:
+                    warehouse_positions_linked += 1
+                if linked_stock:
+                    warehouse_positions_on_stock += 1
+                if linked_delivered:
+                    warehouse_positions_delivered += 1
+                request_quantity = sum(float(link.request_qantity or 0) for link in linked_rows) if linked_rows else None
+                warehouse_quantity = sum(float(link.warehouse_quantity or 0) for link in linked_rows) if linked_rows else None
+                warehouse_status = "Доставлено" if linked_delivered else "На складе" if linked_stock else None
 
                 request_items.append(
                     {
@@ -147,8 +184,25 @@ class RequestRepository:
                             "name": warehouse.name,
                             "parent_id": warehouse.parent_id,
                         },
+                        "request_warehouse_list": [
+                            {
+                                "request_warehouse_list_id": link.request_warehouse_list_id,
+                                "warehouse_id": link.warehouse_id,
+                                "warehouse_name": warehouses_by_id.get(link.warehouse_id).name if warehouses_by_id.get(link.warehouse_id) else None,
+                                "warehouse_type": warehouses_by_id.get(link.warehouse_id).type if warehouses_by_id.get(link.warehouse_id) else None,
+                                "request_qantity": link.request_qantity,
+                                "warehouse_quantity": link.warehouse_quantity,
+                            }
+                            for link in linked_rows
+                        ],
+                        "warehouse_status": warehouse_status,
+                        "request_warehouse_quantity": request_quantity,
+                        "warehouse_quantity": warehouse_quantity,
                     }
                 )
+
+            total_positions = warehouse_positions_total
+            answered_positions = len(mapped_request_item_ids_by_request_id.get(req.id, set()))
 
             request_logs = [
                 {
@@ -175,6 +229,12 @@ class RequestRepository:
                     "rejected_at": req.rejected_at,
                     "completed_at": req.completed_at,
                     "deadline": req.deadline,
+                    "answered_positions": answered_positions,
+                    "total_positions": total_positions,
+                    "warehouse_positions_total": warehouse_positions_total,
+                    "warehouse_positions_linked": warehouse_positions_linked,
+                    "warehouse_positions_on_stock": warehouse_positions_on_stock,
+                    "warehouse_positions_delivered": warehouse_positions_delivered,
                     "status": None if not status else {"id": status.id, "name": status.name},
                     "items": request_items,
                     "logs": request_logs,
@@ -217,8 +277,9 @@ class RequestRepository:
             return []
         return self.db.query(WarehouseCategoryRef).filter(WarehouseCategoryRef.id.in_(unique_ids)).all()
 
-    def get_nomenclature_by_id(self, nomenclature_id: str) -> NomenclatureRef | None:
-        return self.db.query(NomenclatureRef).filter(NomenclatureRef.id == nomenclature_id).first()
+    def get_nomenclature_by_id(self, nomenclature_id: str) -> object | None:
+        rows = self._get_nomenclature_by_ids([nomenclature_id])
+        return rows[0] if rows else None
 
     def get_next_request_item_num(self, request_id: int) -> int:
         max_num = (
@@ -259,6 +320,74 @@ class RequestRepository:
     def delete_request_item(self, item: RequestItem) -> None:
         self.db.delete(item)
         self.db.commit()
+
+    def _get_nomenclature_by_ids(self, nomenclature_ids: list[str]) -> list[object]:
+        unique_ids = list({item for item in nomenclature_ids if item})
+        if not unique_ids:
+            return []
+        columns = self._get_table_columns("nomenclature")
+        select_columns = [
+            "id",
+            "warehouse_category_id",
+            "name",
+            "unit_id",
+        ]
+        optional_columns = [
+            "description",
+            "article",
+            "length",
+            "width",
+            "height",
+            "weight",
+            "vat_rate",
+            "price_opt",
+            "price_opt2",
+            "price_retail",
+            "created_at",
+            "created_by",
+        ]
+        select_columns.extend([column for column in optional_columns if column in columns])
+        rows = self.db.execute(
+            text(
+                f"SELECT {', '.join(select_columns)} "
+                "FROM nomenclature "
+                "WHERE id IN :ids"
+            ).bindparams(bindparam("ids", expanding=True)),
+            {"ids": unique_ids},
+        ).mappings().all()
+        return [self._build_nomenclature_namespace(row) for row in rows]
+
+    def _get_table_columns(self, table_name: str) -> set[str]:
+        if table_name in self._table_columns_cache:
+            return self._table_columns_cache[table_name]
+        try:
+            rows = self.db.execute(text(f"SHOW COLUMNS FROM {table_name}")).mappings().all()
+            columns = {str(row["Field"]) for row in rows}
+        except Exception:
+            columns = set()
+        self._table_columns_cache[table_name] = columns
+        return columns
+
+    @staticmethod
+    def _build_nomenclature_namespace(row) -> object:
+        return SimpleNamespace(
+            id=row.get("id"),
+            warehouse_category_id=row.get("warehouse_category_id"),
+            name=row.get("name"),
+            description=row.get("description"),
+            article=row.get("article"),
+            unit_id=row.get("unit_id"),
+            length=row.get("length"),
+            width=row.get("width"),
+            height=row.get("height"),
+            weight=row.get("weight"),
+            vat_rate=row.get("vat_rate"),
+            price_opt=row.get("price_opt"),
+            price_opt2=row.get("price_opt2"),
+            price_retail=row.get("price_retail"),
+            created_at=row.get("created_at"),
+            created_by=row.get("created_by"),
+        )
 
     def create_request_log(self, request_id: int, payload: dict) -> RequestLog:
         item = RequestLog(
@@ -309,3 +438,25 @@ class RequestRepository:
             )
             .count()
         )
+
+    # ─── Chat ID ────────────────────────────────────────────────────────────────
+
+    def get_chat_ids_by_request(self, request_ids: list[int]) -> dict[int, int]:
+        from app.models.chat import Chat
+        if not request_ids:
+            return {}
+        chats = (
+            self.db.query(Chat)
+            .filter(Chat.type == "request", Chat.request_id.in_(request_ids))
+            .all()
+        )
+        return {chat.request_id: chat.id for chat in chats if chat.request_id}
+
+    def get_chat_id_by_request(self, request_id: int) -> int | None:
+        from app.models.chat import Chat
+        chat = (
+            self.db.query(Chat)
+            .filter(Chat.type == "request", Chat.request_id == request_id)
+            .first()
+        )
+        return chat.id if chat else None

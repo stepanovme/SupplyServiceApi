@@ -51,6 +51,15 @@ class RequestFile(SupplyBase):
     created_by = Column(CHAR(36), nullable=True, index=True)
 
 
+class NomenclatureFile(SupplyBase):
+    __tablename__ = "nomenclature_files"
+
+    id = Column(CHAR(36), primary_key=True)
+    nomenclature_id = Column(CHAR(36), ForeignKey("nomenclature.id"), nullable=False, index=True)
+    file_id = Column(CHAR(36), ForeignKey("files.id"), nullable=False, index=True)
+    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+
+
 class FileAudit(SupplyBase):
     __tablename__ = "file_audit"
 

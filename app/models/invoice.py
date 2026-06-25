@@ -3,7 +3,7 @@ from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy import CHAR, Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CHAR, Boolean, Column, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
 
@@ -28,9 +28,12 @@ class Invoice(SupplyBase):
     vat_rate = Column(Integer, nullable=False, default=0)
     vat_amount = Column(Float, nullable=False, default=0)
     status = Column(CHAR(36), ForeignKey("status.id"), nullable=False)
+    from_by = Column(CHAR(36), nullable=True, index=True)
+    object_type = Column(Enum("object", "object_levels_id", name="object_type_enum"), nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     updated_at = Column(DateTime, nullable=True)
     created_by = Column(CHAR(36), nullable=False)
+    comment = Column(Text, nullable=True)
 
 
 class InvoiceItem(SupplyBase):
@@ -93,7 +96,10 @@ class InvoiceCreate(BaseModel):
     total_amount: float | None = Field(default=None)
     vat_rate: int | None = Field(default=None)
     vat_amount: float | None = Field(default=None)
+    from_by: str | None = Field(default=None)
+    object_type: str | None = Field(default=None)
     status: str | None = Field(default=None)
+    comment: str | None = Field(default=None)
 
 
 class InvoiceUpdate(BaseModel):
@@ -112,7 +118,10 @@ class InvoiceUpdate(BaseModel):
     total_amount: float | None = Field(default=None)
     vat_rate: int | None = Field(default=None)
     vat_amount: float | None = Field(default=None)
+    from_by: str | None = Field(default=None)
+    object_type: str | None = Field(default=None)
     status: str | None = Field(default=None)
+    comment: str | None = Field(default=None)
 
 
 class InvoiceItemCreate(BaseModel):
@@ -141,6 +150,13 @@ class InvoiceItemUpdate(BaseModel):
 
 class InvoiceParseRequest(BaseModel):
     file_path: str
+
+
+class InvoiceDuplicateCheckRequest(BaseModel):
+    num: str | None = None
+    date: dt_date | None = None
+    provider_id: str | None = None
+    payer_id: str | None = None
 
 
 class InvoiceLogCreate(BaseModel):

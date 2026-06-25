@@ -63,6 +63,47 @@ class CounterpartyRepository:
             "checking_account": bank.get("checking_account") if bank else None,
         }
 
+    def get_counterparty_names(self, counterparty_ids: list[str]) -> dict[str, str]:
+        unique_ids = list({counterparty_id for counterparty_id in counterparty_ids if counterparty_id})
+        if not unique_ids:
+            return {}
+
+        result: dict[str, str] = {}
+        for counterparty_id in unique_ids:
+            row = self.get_counterparty_brief(counterparty_id)
+            if not row:
+                continue
+            result[str(counterparty_id)] = row.get("short_name") or ""
+        return result
+
+    def find_by_inn(self, inn: str) -> dict | None:
+        if not inn:
+            return None
+
+        for table_name in ("details_ip", "details_llc"):
+            table_columns = self._get_table_columns(table_name)
+            if "inn" not in table_columns:
+                continue
+
+            fk_column = self._resolve_counterparty_fk_column(table_columns)
+            if not fk_column:
+                continue
+
+            row = self.db.execute(
+                text(
+                    f"SELECT {fk_column} AS counterparty_id "
+                    f"FROM {table_name} "
+                    "WHERE inn = :inn "
+                    "LIMIT 1"
+                ),
+                {"inn": inn},
+            ).mappings().first()
+            if row:
+                counterparty_id = str(row["counterparty_id"])
+                return self.get_counterparty_brief(counterparty_id)
+
+        return None
+
     def _get_details_row(
         self,
         table_name: str,

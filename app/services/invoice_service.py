@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from fastapi import HTTPException, status
 
 from app.models.request_file import FileAudit, FileDB
+from app.models.project_user_role import ProjectUserRoleType
 from app.models.invoice import (
     InvoiceCreate,
     InvoiceLogCreate,
@@ -27,6 +28,7 @@ from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_file_repository import RequestFileRepository
+from app.repositories.project_user_role_repository import ProjectUserRoleRepository
 from app.services.project_name_builder import build_project_name, load_project_reference_maps
 
 DEFAULT_NEW_STATUS_ID = "1ff34436-1312-11f1-aa8c-bc241127d0bd"
@@ -45,12 +47,14 @@ class InvoiceService:
         counterparty_repo: CounterpartyRepository | None = None,
         auth_user_repo: AuthUserRepository | None = None,
         reference_repo: ReferenceObjectRepository | None = None,
+        project_user_role_repo: ProjectUserRoleRepository | None = None,
     ) -> None:
         self.repo = repo
         self.file_repo = file_repo
         self.counterparty_repo = counterparty_repo
         self.auth_user_repo = auth_user_repo
         self.reference_repo = reference_repo
+        self.project_user_role_repo = project_user_role_repo
 
     def get_all(self):
         invoices = self.repo.get_invoices()
@@ -61,9 +65,20 @@ class InvoiceService:
         invoice_ids = {log.invoice_id for log in logs}
 
         all_invoices = self.repo.get_invoices()
+        managed_level_ids = self._get_supply_manager_level_ids(user_id)
+        request_meta = self.repo.get_requests_meta_by_ids(
+            [invoice.request_id for invoice in all_invoices if invoice.request_id is not None]
+        )
         for invoice in all_invoices:
             if invoice.created_by == user_id:
                 invoice_ids.add(invoice.id)
+                continue
+            if managed_level_ids:
+                object_levels_id = invoice.object_levels_id
+                if not object_levels_id and invoice.request_id is not None:
+                    object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
+                if object_levels_id in managed_level_ids:
+                    invoice_ids.add(invoice.id)
 
         invoices = self.repo.get_invoices_by_ids(list(invoice_ids))
         return self._serialize_invoice_list(invoices)
@@ -201,6 +216,190 @@ class InvoiceService:
                 "total_amount": normalized["total_amount"],
             },
             "items_count": len(created_items),
+        }
+
+    def upload_invoice_file(self, invoice_id: int, file_bytes: bytes, original_name: str, mime_type: str, user_id: str):
+        if not self.file_repo:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="File repository is not configured")
+
+        invoice = self.repo.get_invoice_by_id(invoice_id)
+        if not invoice:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
+        file_type = self.file_repo.get_file_type_by_id(INVOICE_FILE_TYPE_ID)
+        if not file_type:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Active invoice file type not found")
+
+        extension = Path(original_name).suffix.lower().lstrip(".")
+        if not extension:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File extension is required")
+
+        allowed_extensions = file_type.allowed_extensions or []
+        if isinstance(allowed_extensions, str):
+            allowed_extensions = [allowed_extensions]
+        normalized_allowed = [str(item).lower().lstrip(".") for item in allowed_extensions]
+        if normalized_allowed and extension not in normalized_allowed:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File extension .{extension} is not allowed")
+
+        max_size_mb = file_type.max_size_mb or 10
+        if len(file_bytes) > max_size_mb * 1024 * 1024:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"File size exceeds {max_size_mb} MB")
+
+        old_file_id = invoice.file_id
+
+        file_id = str(uuid.uuid4())
+        storage_name = f"{uuid.uuid4().hex}.{extension}"
+        directory_suffix = str(invoice.request_id) if invoice.request_id is not None else str(invoice_id)
+        invoice_dir = os.path.join(BASE_INVOICE_FILES_DIR, directory_suffix)
+        self._ensure_directory(invoice_dir)
+
+        file_path = os.path.join(invoice_dir, storage_name)
+        with open(file_path, "wb") as file_stream:
+            file_stream.write(file_bytes)
+
+        md5_hash = hashlib.md5(file_bytes).hexdigest()
+        file_row = FileDB(
+            id=file_id,
+            original_name=original_name,
+            storage_name=storage_name,
+            file_type_id=file_type.id,
+            mime_type=mime_type or "application/octet-stream",
+            extension=extension,
+            file_size=len(file_bytes),
+            md5_hash=md5_hash,
+            file_path=file_path,
+            version=1,
+            uploaded_by=user_id,
+            status="active",
+        )
+
+        try:
+            created_file = self.file_repo.create_file(file_row)
+            self.file_repo.add_audit(
+                FileAudit(
+                    id=str(uuid.uuid4()),
+                    file_id=created_file.id,
+                    action="upload",
+                    user_id=user_id,
+                )
+            )
+        except Exception:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            raise
+
+        if old_file_id:
+            old_file = self.file_repo.get_file_by_id(old_file_id)
+            if old_file:
+                self.file_repo.mark_file_deleted(old_file)
+                self.file_repo.add_audit(
+                    FileAudit(
+                        id=str(uuid.uuid4()),
+                        file_id=old_file_id,
+                        action="delete",
+                        user_id=user_id,
+                    )
+                )
+                if os.path.exists(old_file.file_path):
+                    try:
+                        os.remove(old_file.file_path)
+                    except OSError:
+                        pass
+
+        invoice.file_id = created_file.id
+        self.repo.save_invoice(invoice)
+
+        return self.get_invoice(invoice_id)
+
+    def check_duplicate(self, num: str | None, date, provider_id: str | None, payer_id: str | None) -> dict:
+        duplicate = self.repo.find_duplicate_invoice(
+            provider_id=provider_id,
+            payer_id=payer_id,
+            num=num,
+            date=date,
+        )
+        return {"is_duplicate": duplicate is not None, "invoice": duplicate}
+
+    def parse_counterparty_from_file(self, file_bytes: bytes, file_name: str):
+        mistral_api_key = os.getenv("MISTRAL_API_KEY")
+        if not mistral_api_key:
+            project_root = Path(__file__).resolve().parents[2]
+            load_dotenv(project_root / ".env", override=True)
+            mistral_api_key = os.getenv("MISTRAL_API_KEY")
+        if not mistral_api_key:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="MISTRAL_API_KEY is not set")
+
+        try:
+            from mistralai import Mistral
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="mistralai package is not installed",
+            ) from exc
+
+        client = Mistral(api_key=mistral_api_key)
+        uploaded_file = client.files.upload(
+            file={"file_name": file_name, "content": file_bytes},
+            purpose="ocr",
+        )
+        signed_url = client.files.get_signed_url(file_id=uploaded_file.id)
+        ocr_response = client.ocr.process(
+            model="mistral-ocr-latest",
+            document={"type": "document_url", "document_url": signed_url.url},
+        )
+
+        document_text = "\n\n".join(page.markdown for page in ocr_response.pages)
+        prompt = (
+            "Extract invoice data from the document.\n"
+            "Return ONLY valid JSON object with keys:\n"
+            "{\n"
+            '  "seller_inn": string|null,\n'
+            '  "buyer_inn": string|null,\n'
+            '  "invoice_num": string|null,\n'
+            '  "invoice_date": "YYYY-MM-DD"|null\n'
+            "}\n"
+            "INN is a 10 or 12 digit number.\n"
+            "If field is missing in document, set null.\n"
+            "Document:\n"
+            f"{document_text[:15000]}"
+        )
+
+        chat_response = client.chat.complete(
+            model="mistral-large-latest",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw_content = chat_response.choices[0].message.content
+        if isinstance(raw_content, list):
+            raw_content = "".join(
+                part.get("text", "") if isinstance(part, dict) else str(part) for part in raw_content
+            )
+        parsed = self._extract_json_payload(raw_content)
+
+        seller_inn = parsed.get("seller_inn")
+        buyer_inn = parsed.get("buyer_inn")
+        invoice_num = self._as_str(parsed.get("invoice_num"))
+        invoice_date = self._as_date(parsed.get("invoice_date"))
+
+        seller = self.counterparty_repo.find_by_inn(str(seller_inn)) if seller_inn and self.counterparty_repo else None
+        buyer = self.counterparty_repo.find_by_inn(str(buyer_inn)) if buyer_inn and self.counterparty_repo else None
+
+        duplicate = None
+        if seller and buyer and invoice_num and invoice_date:
+            duplicate = self.repo.find_duplicate_invoice(
+                provider_id=seller.get("id"),
+                payer_id=buyer.get("id"),
+                num=invoice_num,
+                date=invoice_date,
+            )
+
+        return {
+            "seller_inn": seller_inn,
+            "buyer_inn": buyer_inn,
+            "invoice_num": invoice_num,
+            "invoice_date": invoice_date,
+            "seller": seller,
+            "buyer": buyer,
+            "duplicate": duplicate,
         }
 
     def create_invoice(self, payload: InvoiceCreate, user_id: str):
@@ -470,6 +669,13 @@ class InvoiceService:
             "date_response": updated.date_response,
         }
 
+    def delete_invoice_log(self, invoice_id: int, log_id: str):
+        row = self.repo.get_invoice_log_by_id(invoice_id, log_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice log not found")
+        self.repo.delete_invoice_log(row)
+        return None
+
     def create_invoice_payment(self, invoice_id: int, payload: InvoicePaymentCreate, created_by: str):
         invoice = self.repo.get_invoice_by_id(invoice_id)
         if not invoice:
@@ -499,12 +705,29 @@ class InvoiceService:
         )
         return self._map_payment(updated, users_by_id)
 
+    def delete_invoice_payment(self, invoice_id: int, payment_id: str):
+        row = self.repo.get_invoice_payment_by_id(invoice_id, payment_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice payment not found")
+        self.repo.delete_invoice_payment(row)
+        return None
+
     def get_invoice(self, invoice_id: int):
         invoice = self.repo.get_invoice_by_id(invoice_id)
         if not invoice:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
 
         items = self.repo.get_invoice_items(invoice_id)
+        item_mappings = self.repo.get_item_mappings_by_invoice_id(invoice_id)
+        request_item_id_by_invoice_item_id: dict[str, str | None] = {}
+        for mapping in item_mappings:
+            invoice_item_id = str(mapping.invoice_item_id) if mapping.invoice_item_id else None
+            if not invoice_item_id:
+                continue
+            if invoice_item_id not in request_item_id_by_invoice_item_id:
+                request_item_id_by_invoice_item_id[invoice_item_id] = (
+                    str(mapping.request_item_id) if mapping.request_item_id else None
+                )
         unit_ids = [item.unit_id for item in items if item.unit_id]
         unit_names = self.repo.get_unit_names(unit_ids)
         request_meta = self.repo.get_requests_meta_by_ids(
@@ -513,7 +736,14 @@ class InvoiceService:
         object_levels_id = invoice.object_levels_id
         if not object_levels_id and invoice.request_id is not None:
             object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
+        object_type = invoice.object_type
         project_name, project = self._build_project_block(object_levels_id)
+        if object_type == "object" and object_levels_id and self.reference_repo:
+            objects = self.reference_repo.get_objects_by_ids([object_levels_id])
+            if objects:
+                obj = objects[0]
+                project_name = obj.short_name or obj.full_name
+                project = obj
 
         logs = self.repo.get_invoice_logs(invoice.id)
         payments = self.repo.get_invoice_payments(invoice.id)
@@ -525,13 +755,16 @@ class InvoiceService:
             if payment.paid_by:
                 payment_user_ids.append(payment.paid_by)
         users_by_id = self._get_users_map(
-            log_user_ids + payment_user_ids + ([invoice.created_by] if invoice.created_by else [])
+            log_user_ids + payment_user_ids + ([invoice.created_by] if invoice.created_by else []) + ([invoice.from_by] if invoice.from_by else [])
         )
 
         grouped_logs = self._group_invoice_logs(logs, users_by_id)
 
+        chat_id = self.repo.get_chat_id_by_invoice(invoice.id)
+
         return {
             "id": invoice.id,
+            "chat_id": chat_id,
             "object_levels_id": object_levels_id,
             "project_id": project.id if project else None,
             "project_name": project_name,
@@ -555,6 +788,10 @@ class InvoiceService:
             "total_amount": invoice.total_amount,
             "vat_rate": invoice.vat_rate,
             "vat_amount": invoice.vat_amount,
+            "comment": invoice.comment,
+            "object_type": invoice.object_type,
+            "from_by": invoice.from_by,
+            "from_by_user": self._map_user(users_by_id.get(invoice.from_by)),
             "status": invoice.status,
             "status_name": self.repo.get_status_name(invoice.status),
             "created_at": invoice.created_at,
@@ -565,14 +802,27 @@ class InvoiceService:
             "planning": grouped_logs["planning"],
             "payment": grouped_logs["payment"],
             "payments": [self._map_payment(payment, users_by_id) for payment in payments],
-            "items": [self._item_to_dict(item, unit_names) for item in items],
+            "items": [
+                self._item_to_dict(
+                    item,
+                    unit_names,
+                    request_item_id=request_item_id_by_invoice_item_id.get(str(item.id)),
+                )
+                for item in items
+            ],
         }
 
     @staticmethod
-    def _item_to_dict(item, unit_names: dict[str, str] | None = None):
+    def _item_to_dict(
+        item,
+        unit_names: dict[str, str] | None = None,
+        request_item_id: str | None = None,
+    ):
         unit_names = unit_names or {}
         return {
             "id": item.id,
+            "invoice_item_id": item.id,
+            "request_item_id": request_item_id,
             "invoice_id": item.invoice_id,
             "name": item.name,
             "unit_name": item.unit_name,
@@ -627,6 +877,8 @@ class InvoiceService:
                 counterparty_ids.add(invoice.payer_id)
             if invoice.created_by:
                 user_ids.add(invoice.created_by)
+            if invoice.from_by:
+                user_ids.add(invoice.from_by)
             object_levels_id = invoice.object_levels_id
             if not object_levels_id and invoice.request_id is not None:
                 object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
@@ -657,18 +909,32 @@ class InvoiceService:
             object_level_ids,
         ) if self.reference_repo else ({}, {}, {}, {})
 
+        chat_ids_map = self.repo.get_chat_ids_by_invoice(invoice_ids)
+
+        object_type_ids = {
+            invoice.object_levels_id for invoice in invoices
+            if invoice.object_type == "object" and invoice.object_levels_id
+        }
+        object_names = {}
+        if object_type_ids and self.reference_repo:
+            for obj in self.reference_repo.get_objects_by_ids(list(object_type_ids)):
+                object_names[obj.id] = obj.short_name or obj.full_name
+
         result = []
         for invoice in invoices:
             object_levels_id = invoice.object_levels_id
             if not object_levels_id and invoice.request_id is not None:
                 object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
-            project_name = build_project_name(
-                object_levels_id,
-                levels_by_id,
-                objects_by_id,
-                contracts_by_id,
-                work_types_by_id,
-            ) if self.reference_repo else None
+            if invoice.object_type == "object":
+                project_name = object_names.get(object_levels_id)
+            else:
+                project_name = build_project_name(
+                    object_levels_id,
+                    levels_by_id,
+                    objects_by_id,
+                    contracts_by_id,
+                    work_types_by_id,
+                ) if self.reference_repo else None
             grouped_logs = self._group_invoice_logs(logs_by_invoice_id.get(invoice.id, []), users_by_id)
             result.append(
                 {
@@ -683,9 +949,21 @@ class InvoiceService:
                     "provider_name": counterparty_names.get(invoice.provider_id),
                     "payer_id": invoice.payer_id,
                     "payer_name": counterparty_names.get(invoice.payer_id),
+                    "chat_id": chat_ids_map.get(invoice.id),
+                    "object_type": invoice.object_type,
+                    "from_by": invoice.from_by,
+                    "from_by_user": self._map_user(users_by_id.get(invoice.from_by)),
                     "status": invoice.status,
                     "status_name": self.repo.get_status_name(invoice.status),
+                    "is_delivery_included": invoice.is_delivery_included,
+                    "prepayment_percent": invoice.prepayment_percent,
+                    "due_days": invoice.due_days,
+                    "valid_until": invoice.valid_until,
+                    "is_urgent": invoice.is_urgent,
                     "total_amount": invoice.total_amount,
+                    "vat_rate": invoice.vat_rate,
+                    "vat_amount": invoice.vat_amount,
+                    "comment": invoice.comment,
                     "created_at": invoice.created_at,
                     "created_by": invoice.created_by,
                     "created_by_user": self._map_user(users_by_id.get(invoice.created_by)),
@@ -771,6 +1049,18 @@ class InvoiceService:
         if meta and meta.get("object_levels_id"):
             data["object_levels_id"] = meta["object_levels_id"]
         return data
+
+    def _get_supply_manager_level_ids(self, user_id: str) -> set[str]:
+        if not self.project_user_role_repo:
+            return set()
+        # Backward compatibility for possible typo in historical data.
+        role_values = [ProjectUserRoleType.SUPPLY_MANAGER.value, "Supply maneger"]
+        level_ids: set[str] = set()
+        for role in role_values:
+            for level_id in self.project_user_role_repo.get_object_level_ids_by_user_and_role(user_id, role):
+                if level_id:
+                    level_ids.add(level_id)
+        return level_ids
 
     @staticmethod
     def _map_user(user):

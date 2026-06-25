@@ -1,7 +1,9 @@
 from fastapi import HTTPException, status
 
 from app.models.supply_request import SupplyRequest, SupplyRequestCreate, SupplyRequestUpdate
+from app.models.project_user_role import ProjectUserRoleType
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.project_user_role_repository import ProjectUserRoleRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_repository import RequestRepository
 from app.services.project_name_builder import build_project_name, load_project_reference_maps
@@ -15,10 +17,12 @@ class RequestService:
         repo: RequestRepository,
         auth_user_repo: AuthUserRepository,
         reference_repo: ReferenceObjectRepository,
+        project_user_role_repo: ProjectUserRoleRepository | None = None,
     ) -> None:
         self.repo = repo
         self.auth_user_repo = auth_user_repo
         self.reference_repo = reference_repo
+        self.project_user_role_repo = project_user_role_repo
 
     def get_all(self):
         requests = self.repo.get_all()
@@ -63,6 +67,7 @@ class RequestService:
                 contracts_by_id,
                 work_types_by_id,
             )
+            item["required_date_print"] = self._format_print_date(item.get("deadline"))
             item["created_by_user"] = self._map_user(users_by_id.get(item.get("created_by")))
             item["executor_user"] = self._map_user(users_by_id.get(item.get("executor")))
 
@@ -73,16 +78,23 @@ class RequestService:
                 invoice["provider_name"] = counterparty_names.get(invoice.get("provider_id"))
                 invoice["payer_name"] = counterparty_names.get(invoice.get("payer_id"))
 
+        request_ids = [item["id"] for item in requests if item.get("id")]
+        chat_ids_map = self.repo.get_chat_ids_by_request(request_ids)
+        for item in requests:
+            item["chat_id"] = chat_ids_map.get(item["id"])
+
         return requests
 
     def get_available_for_user(self, user_id: str):
         requests = self.get_all()
+        managed_level_ids = self._get_supply_manager_level_ids(user_id)
         return [
             item
             for item in requests
             if item.get("created_by") == user_id
             or item.get("executor") == user_id
             or any(log.get("user_id") == user_id for log in item.get("logs", []))
+            or (item.get("object_levels_id") in managed_level_ids if managed_level_ids else False)
         ]
 
     def get_by_id(self, request_id: int):
@@ -145,3 +157,23 @@ class RequestService:
             "patronymic": user.patronymic,
             "short_fio": short_fio,
         }
+
+    @staticmethod
+    def _format_print_date(value):
+        if not value:
+            return None
+        if hasattr(value, "strftime"):
+            return value.strftime("%d.%m.%Y")
+        return str(value)
+
+    def _get_supply_manager_level_ids(self, user_id: str) -> set[str]:
+        if not self.project_user_role_repo:
+            return set()
+        # Backward compatibility for possible typo in historical data.
+        role_values = [ProjectUserRoleType.SUPPLY_MANAGER.value, "Supply maneger"]
+        level_ids: set[str] = set()
+        for role in role_values:
+            for level_id in self.project_user_role_repo.get_object_level_ids_by_user_and_role(user_id, role):
+                if level_id:
+                    level_ids.add(level_id)
+        return level_ids

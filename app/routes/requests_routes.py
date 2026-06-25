@@ -6,6 +6,7 @@ from app.middleware.auth_middleware import get_session
 from app.models.session import SessionDB
 from app.models.supply_request import SupplyRequestCreate, SupplyRequestUpdate
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.project_user_role_repository import ProjectUserRoleRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.request_file_repository import RequestFileRepository
 from app.repositories.request_repository import RequestRepository
@@ -24,6 +25,7 @@ def build_request_service(
         RequestRepository(supply_db),
         AuthUserRepository(auth_db),
         ReferenceObjectRepository(reference_db),
+        ProjectUserRoleRepository(supply_db),
     )
 
 
