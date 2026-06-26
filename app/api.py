@@ -1,10 +1,23 @@
 import asyncio
+import json
 
 from fastapi import FastAPI, Query, WebSocket, WebSocketDisconnect
 
+from app.database import SupplySessionLocal
+from app.repositories.invoice_repository import InvoiceRepository
 from app.routes import main_router
 from app.routes.request_suppliers_routes import public_request_suppliers_router
 from app.services.ws_manager import ws_manager
+
+
+def _get_badge_counts(user_id: str) -> dict:
+    db = SupplySessionLocal()
+    try:
+        repo = InvoiceRepository(db)
+        return repo.get_badge_counts(user_id)
+    finally:
+        db.close()
+
 
 app = FastAPI(
     title="SupplyService",
@@ -28,11 +41,24 @@ async def websocket_endpoint(
 
     await ws_manager.connect(user_id, ws)
 
+    # send initial badge counts
+    try:
+        counts = _get_badge_counts(user_id)
+        await ws.send_text(json.dumps({"type": "badge_counts", **counts}))
+    except Exception:
+        pass
+
     try:
         while True:
             data = await ws.receive_text()
             if data == "ping":
                 await ws.send_text("pong")
+            elif data == "get_badge":
+                try:
+                    counts = _get_badge_counts(user_id)
+                    await ws.send_text(json.dumps({"type": "badge_counts", **counts}))
+                except Exception:
+                    pass
     except WebSocketDisconnect:
         pass
     finally:

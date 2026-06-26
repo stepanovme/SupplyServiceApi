@@ -273,3 +273,115 @@ class InvoiceRepository:
             .all()
         )
         return {str(unit_id): unit_name for unit_id, unit_name in rows}
+
+    def get_badge_counts(self, user_id: str) -> dict:
+        from app.models.chat import Chat, MessageMention
+        from collections import defaultdict
+
+        # 1. approval — InvoiceLog type=approval, user_id, status_name=pending
+        approval_rows = (
+            self.db.query(InvoiceLog.invoice_id)
+            .filter(
+                InvoiceLog.type == "approval",
+                InvoiceLog.user_id == user_id,
+                InvoiceLog.status_name == "pending",
+            )
+            .distinct()
+            .all()
+        )
+        approval_invoice_ids = {row[0] for row in approval_rows}
+
+        # 2. planning + payment — InvoiceLog type=planing or payment for user
+        user_logs = (
+            self.db.query(InvoiceLog)
+            .filter(
+                InvoiceLog.user_id == user_id,
+                InvoiceLog.type.in_(["planing", "payment"]),
+            )
+            .all()
+        )
+        planning_invoice_ids: set[int] = set()
+        payment_invoice_ids: set[int] = set()
+        for log in user_logs:
+            if log.type == "planing":
+                planning_invoice_ids.add(log.invoice_id)
+            elif log.type == "payment":
+                payment_invoice_ids.add(log.invoice_id)
+
+        all_ids = approval_invoice_ids | planning_invoice_ids | payment_invoice_ids
+        if not all_ids:
+            return {"approval": 0, "planning_required": 0, "payment_required": 0, "attention": 0, "total": 0}
+
+        # fetch invoices
+        invoices_map = {
+            inv.id: inv
+            for inv in self.db.query(Invoice).filter(Invoice.id.in_(all_ids)).all()
+        }
+
+        # fetch payments grouped by invoice_id
+        payment_rows = (
+            self.db.query(InvoicePayment)
+            .filter(InvoicePayment.invoice_id.in_(all_ids))
+            .all()
+        )
+        payments_by_invoice: dict[int, list[InvoicePayment]] = defaultdict(list)
+        for pmt in payment_rows:
+            payments_by_invoice[pmt.invoice_id].append(pmt)
+
+        # planning_required
+        planning_required = 0
+        for inv_id in planning_invoice_ids:
+            inv = invoices_map.get(inv_id)
+            if not inv:
+                continue
+            inv_payments = payments_by_invoice.get(inv_id, [])
+            has_unpaid_planned = any(
+                pmt.paid is None or (pmt.paid == 0 and pmt.paid_at is None)
+                for pmt in inv_payments
+            )
+            if has_unpaid_planned:
+                continue
+            total_paid = sum(pmt.paid or 0 for pmt in inv_payments)
+            if not inv_payments or total_paid != (inv.total_amount or 0):
+                planning_required += 1
+
+        # payment_required — has unpaid planned payments
+        payment_required = 0
+        for inv_id in payment_invoice_ids:
+            inv_payments = payments_by_invoice.get(inv_id, [])
+            has_unpaid_planned = any(
+                pmt.paid is None or (pmt.paid == 0 and pmt.paid_at is None)
+                for pmt in inv_payments
+            )
+            if has_unpaid_planned:
+                payment_required += 1
+
+        # attention — message_mentions in invoice chats
+        chats = (
+            self.db.query(Chat)
+            .filter(Chat.type == "invoice", Chat.invoice_id.in_(all_ids))
+            .all()
+        )
+        invoice_chat_ids = {chat.id for chat in chats if chat.id}
+        attention = 0
+        if invoice_chat_ids:
+            attention = (
+                self.db.query(MessageMention)
+                .filter(
+                    MessageMention.chat_id.in_(invoice_chat_ids),
+                    MessageMention.user_id == user_id,
+                    MessageMention.is_notified == False,
+                    MessageMention.is_viewed == False,
+                )
+                .count()
+            )
+
+        approval_count = len(approval_invoice_ids)
+        total = approval_count + planning_required + payment_required + attention
+        return {
+            "approval": approval_count,
+            "planning_required": planning_required,
+            "payment_required": payment_required,
+            "attention": attention,
+            "total": total,
+        }

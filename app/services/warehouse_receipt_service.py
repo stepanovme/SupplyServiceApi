@@ -447,6 +447,14 @@ class WarehouseReceiptService:
                     "retail": receipt.retail,
                     "status_id": receipt.status_id,
                     "status_name": status_names.get(receipt.status_id),
+                    "sum": sum(
+                        (item.price or 0) * (item.quantity or 0)
+                        for item in items_by_receipt_id.get(receipt.id, [])
+                    ),
+                    "sum_opt": sum(
+                        (item.price_opt or 0) * (item.quantity or 0)
+                        for item in items_by_receipt_id.get(receipt.id, [])
+                    ),
                     "items": receipt_items,
                 }
             )

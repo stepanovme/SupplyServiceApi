@@ -163,5 +163,8 @@ class WSManager:
             {"type": "new_chat", "chat": chat},
         )
 
+    def send_badge_counts(self, user_id: str, counts: dict) -> None:
+        self.send_to_user(user_id, {"type": "badge_counts", **counts})
+
 
 ws_manager = WSManager()

@@ -260,18 +260,10 @@ class WarehouseService:
                     "toll_company_id": source_row.toll_company_id,
                     "toll_company_name": counterparty_names.get(source_row.toll_company_id),
                     "quantity": round(grouped_quantities[(warehouse_id, nomenclature_id, object_levels_id, object_id)], 8),
-                    "price": grouped_prices.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0]
-                    if len(grouped_ids[(warehouse_id, nomenclature_id, object_levels_id, object_id)]) == 1
-                    else None,
-                    "vat_rate": grouped_vat_rates.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0]
-                    if len(grouped_ids[(warehouse_id, nomenclature_id, object_levels_id, object_id)]) == 1
-                    else None,
-                    "upd_item_mapping_id": grouped_mapping_ids.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0]
-                    if len(grouped_ids[(warehouse_id, nomenclature_id, object_levels_id, object_id)]) == 1
-                    else None,
-                    "attribute": grouped_attributes.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0]
-                    if len(grouped_ids[(warehouse_id, nomenclature_id, object_levels_id, object_id)]) == 1
-                    else None,
+                    "price": grouped_prices.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0],
+                    "vat_rate": grouped_vat_rates.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0],
+                    "upd_item_mapping_id": grouped_mapping_ids.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0],
+                    "attribute": grouped_attributes.get((warehouse_id, nomenclature_id, object_levels_id, object_id), [None])[0],
                     "total_quantity": round(total_quantities[(warehouse_id, nomenclature_id)], 8),
                     "date": latest_dates.get((warehouse_id, nomenclature_id, object_levels_id, object_id)),
                 }

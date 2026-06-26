@@ -61,3 +61,43 @@ class ReferenceObjectRepository:
             name = row.short_name or row.full_name
             result[str(row.id)] = name
         return result
+
+    def is_counterparty_internal(self, counterparty_id: str) -> bool:
+        row = self.db.query(CounterpartyRef.is_internal).filter(CounterpartyRef.id == counterparty_id).first()
+        return row is not None and row.is_internal == 1
+
+    def resolve_object_name(self, object_level_id: str) -> str | None:
+        level = self.db.query(ObjectLevel).filter(ObjectLevel.id == object_level_id).first()
+        if not level:
+            return None
+        parts = []
+        current = level
+        work_type_name = None
+        agreement_name = None
+        section_name = None
+
+        while current:
+            if current.level_type == "worktype" and current.work_type:
+                wt = self.db.query(WorkTypeRef).filter(WorkTypeRef.id == current.work_type).first()
+                if wt:
+                    work_type_name = wt.name
+            elif current.level_type == "agreement":
+                if current.contract_id:
+                    cr = self.db.query(ContractRef).filter(ContractRef.id == current.contract_id).first()
+                    if cr:
+                        agreement_name = cr.name
+                if current.name:
+                    agreement_name = current.name
+            elif current.level_type == "section":
+                if current.name:
+                    section_name = current.name
+            if current.parent_id:
+                current = self.db.query(ObjectLevel).filter(ObjectLevel.id == current.parent_id).first()
+            else:
+                current = None
+
+        obj = self.db.query(RefObject).filter(RefObject.id == level.object_id).first()
+        object_name = obj.short_name if obj else level.object_id
+
+        parts = [p for p in [object_name, section_name, agreement_name, work_type_name] if p]
+        return " - ".join(parts) if parts else None

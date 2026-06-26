@@ -1,6 +1,7 @@
 from fastapi import APIRouter
 
 from app.routes.catalog_routes import catalog_router
+from app.routes.contracts_routes import contracts_router
 from app.routes.chats_routes import chats_router
 from app.routes.deals_routes import deals_router
 from app.routes.deliveries_routes import deliveries_router
@@ -50,4 +51,5 @@ main_router.include_router(upd_item_mappings_router)
 main_router.include_router(warehouses_router)
 main_router.include_router(warehouse_receipts_router)
 main_router.include_router(catalog_router)
+main_router.include_router(contracts_router)
 main_router.include_router(mentions_router)

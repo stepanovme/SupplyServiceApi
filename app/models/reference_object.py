@@ -47,3 +47,4 @@ class CounterpartyRef(ReferenceBase):
     id = Column(String(36), primary_key=True)
     short_name = Column(String(255), nullable=True)
     full_name = Column(String(500), nullable=True)
+    is_internal = Column(Integer, nullable=True)

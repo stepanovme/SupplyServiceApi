@@ -1,8 +1,9 @@
 import uuid
+from datetime import date as dt_date
 from datetime import datetime
 
 from pydantic import BaseModel, Field
-from sqlalchemy import CHAR, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import CHAR, Column, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
 
@@ -18,6 +19,11 @@ class Deal(SupplyBase):
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     created_by = Column(CHAR(36), nullable=False, index=True)
+    date = Column(Date, nullable=True)
+    date_event = Column(Date, nullable=True)
+    date_completed = Column(Date, nullable=True)
+    payment_mode = Column(Enum("cash", "non-cash", name="payment_mode_enum"), nullable=False, default="cash")
+    taxes = Column(Enum("agreement", "non-agreement", name="taxes_enum"), nullable=False, default="non-agreement")
 
 
 class DealDelivery(SupplyBase):
@@ -62,6 +68,11 @@ class DealCreate(BaseModel):
     counterparties_to: str | None = Field(default=None)
     counterparties_from: str | None = Field(default=None)
     status_id: str | None = Field(default=None)
+    date: dt_date | None = Field(default=None)
+    date_event: dt_date | None = Field(default=None)
+    date_completed: dt_date | None = Field(default=None)
+    payment_mode: str | None = Field(default=None)
+    taxes: str | None = Field(default=None)
 
 
 class DealUpdate(BaseModel):
@@ -70,6 +81,11 @@ class DealUpdate(BaseModel):
     counterparties_to: str | None = Field(default=None)
     counterparties_from: str | None = Field(default=None)
     status_id: str | None = Field(default=None)
+    date: dt_date | None = Field(default=None)
+    date_event: dt_date | None = Field(default=None)
+    date_completed: dt_date | None = Field(default=None)
+    payment_mode: str | None = Field(default=None)
+    taxes: str | None = Field(default=None)
 
 
 class DealDeliveryCreate(BaseModel):

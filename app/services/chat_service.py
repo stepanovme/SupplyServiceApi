@@ -130,6 +130,7 @@ class ChatService:
                 self.repo.create_mention(message.id, mention_user_id)
                 unviewed = self.repo.get_unviewed_mentions_count(chat_id, mention_user_id)
                 ws_manager.send_mention(member_ids, chat_id, message.id, mention_user_id, unviewed)
+                self._push_badge_for_user(mention_user_id)
 
         return serialized
 
@@ -243,13 +244,27 @@ class ChatService:
         data = payload.model_dump(exclude_unset=True) if payload else {}
         if data:
             self.repo.bulk_update_mentions(mention_ids, data)
-        return [self._serialize_mention(m) for m in self.repo.get_mentions_by_chat_and_user(chat_id, user_id)]
+        result = [self._serialize_mention(m) for m in self.repo.get_mentions_by_chat_and_user(chat_id, user_id)]
+        self._push_badge_for_user(user_id)
+        return result
 
     def get_mention(self, mention_id: int):
         mention = self.repo.get_mention_by_id(mention_id)
         if not mention:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mention not found")
         return self._serialize_mention(mention)
+
+    def update_mention(self, mention_id: int, payload):
+        mention = self.repo.get_mention_by_id(mention_id)
+        if not mention:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mention not found")
+        data = payload.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(mention, key, value)
+        updated = self.repo.save_mention(mention)
+        from app.services.ws_manager import ws_manager
+        self._push_badge_for_user(updated.user_id)
+        return self._serialize_mention(updated)
 
     # ─── My chats ──────────────────────────────────────────────────────────
 
@@ -461,3 +476,18 @@ class ChatService:
             "surname": user.surname,
             "patronymic": user.patronymic,
         }
+
+    def _push_badge_for_user(self, user_id: str) -> None:
+        from app.database import SupplySessionLocal
+        from app.repositories.invoice_repository import InvoiceRepository
+        from app.services.ws_manager import ws_manager
+        try:
+            db = SupplySessionLocal()
+            try:
+                repo = InvoiceRepository(db)
+                counts = repo.get_badge_counts(user_id)
+                ws_manager.send_badge_counts(user_id, counts)
+            finally:
+                db.close()
+        except Exception:
+            pass

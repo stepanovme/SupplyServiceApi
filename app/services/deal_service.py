@@ -24,6 +24,11 @@ from app.repositories.reference_object_repository import ReferenceObjectReposito
 DEFAULT_DEAL_STATUS_ID = "662ce068-3fc1-11f1-b298-bc241127d0bd"
 
 
+OSN_TAX_REGIME = "18e8bdb8-6795-47d7-b7c5-960daab2ba56"
+USN_MINUS_TAX_REGIME = "b53c259a-10a1-11f1-aa8c-bc241127d0bd"
+USN_AGENT_TAX_REGIME = "76ae3b05-ad72-400f-b41a-fa8e0ed5f0c8"
+
+
 class DealServiceManager:
     def __init__(
         self,
@@ -165,6 +170,7 @@ class DealServiceManager:
         }
         deal_ids = [deal.id for deal in deals if deal.id]
         chat_ids_map = self.repo.get_chat_ids_by_deal(deal_ids)
+
         return [
             {
                 "id": deal.id,
@@ -178,6 +184,54 @@ class DealServiceManager:
                 "counterparties_from_name": counterparty_names.get(deal.counterparties_from),
                 "status_id": deal.status_id,
                 "status_name": statuses.get(deal.status_id),
+                "date": deal.date,
+                "date_event": deal.date_event,
+                "date_completed": deal.date_completed,
+                "payment_mode": deal.payment_mode,
+                "taxes": deal.taxes,
+                "sum_deal": (
+                    sum((p.price or 0) * (p.quantity or 0) for p in products_by_deal.get(deal.id, []))
+                    + sum((d.price or 0) for d in deliveries_by_deal.get(deal.id, []))
+                    + sum((s.price or 0) * (s.quantity or 0) for s in services_by_deal.get(deal.id, []))
+                ),
+                "subtotal": self._calc_subtotal(
+                    products_by_deal.get(deal.id, []),
+                    deliveries_by_deal.get(deal.id, []),
+                    services_by_deal.get(deal.id, []),
+                ),
+                "total_purchase": self._calc_total_purchase(
+                    products_by_deal.get(deal.id, []),
+                    deliveries_by_deal.get(deal.id, []),
+                    services_by_deal.get(deal.id, []),
+                ),
+                "acquiring": self._calc_acquiring(
+                    deal.payment_mode,
+                    products_by_deal.get(deal.id, []),
+                    deliveries_by_deal.get(deal.id, []),
+                    services_by_deal.get(deal.id, []),
+                ),
+                "total_tax": self._calc_total_tax(
+                    deal.counterparties_from,
+                    deal.taxes,
+                    products_by_deal.get(deal.id, []),
+                    deliveries_by_deal.get(deal.id, []),
+                    services_by_deal.get(deal.id, []),
+                )["total"],
+                "tax_details": self._calc_total_tax(
+                    deal.counterparties_from,
+                    deal.taxes,
+                    products_by_deal.get(deal.id, []),
+                    deliveries_by_deal.get(deal.id, []),
+                    services_by_deal.get(deal.id, []),
+                ),
+                "net_profit": self._calc_net_profit(
+                    deal.counterparties_from,
+                    deal.payment_mode,
+                    deal.taxes,
+                    products_by_deal.get(deal.id, []),
+                    deliveries_by_deal.get(deal.id, []),
+                    services_by_deal.get(deal.id, []),
+                ),
                 "created_at": deal.created_at,
                 "created_by": deal.created_by,
                 "created_by_user": self._map_user(users_by_id.get(deal.created_by)),
@@ -187,6 +241,85 @@ class DealServiceManager:
             }
             for deal in deals
         ]
+
+    @staticmethod
+    def _calc_subtotal(products, deliveries, services) -> float:
+        return (
+            sum((p.price or 0) * (p.quantity or 0) for p in products)
+            + sum((d.price or 0) for d in deliveries)
+            + sum((s.price or 0) * (s.quantity or 0) for s in services)
+        )
+
+    @staticmethod
+    def _calc_total_purchase(products, deliveries, services) -> float:
+        return (
+            sum((p.price_purchase or 0) * (p.quantity or 0) for p in products)
+            + sum((d.price_purchase or 0) for d in deliveries)
+            + sum((s.price_purchase or 0) * (s.quantity or 0) for s in services)
+        )
+
+    @staticmethod
+    def _calc_acquiring(payment_mode, products, deliveries, services) -> float:
+        if payment_mode != "non-cash":
+            return 0.0
+        subtotal = (
+            sum((p.price or 0) * (p.quantity or 0) for p in products)
+            + sum((d.price or 0) for d in deliveries)
+            + sum((s.price or 0) * (s.quantity or 0) for s in services)
+        )
+        return round(subtotal * 0.012, 2)
+
+    @staticmethod
+    def _calc_total_tax(tax_regime_id: str | None, taxes: str | None, products, deliveries, services) -> dict:
+        subtotal = DealServiceManager._calc_subtotal(products, deliveries, services)
+        total_purchase = DealServiceManager._calc_total_purchase(products, deliveries, services)
+        result: dict = {}
+
+        if tax_regime_id == OSN_TAX_REGIME:
+            goods_no_vat = sum(
+                (p.price or 0) * (p.quantity or 0)
+                for p in products
+                if p.vat_rate not in (20, 22)
+            )
+            services_sum = sum((s.price or 0) * (s.quantity or 0) for s in services)
+            vat_goods = round(goods_no_vat * 0.22, 2)
+            vat_services = round(services_sum * 0.22, 2)
+            result = {
+                "vat_goods_22": vat_goods,
+                "vat_services_22": vat_services,
+            }
+
+        elif tax_regime_id == USN_MINUS_TAX_REGIME:
+            usn = round(max(subtotal - total_purchase, 0) * 0.15, 2)
+            nds = round(subtotal * 0.05, 2)
+            result = {
+                "usn_15": usn,
+                "nds_5": nds,
+            }
+
+        elif tax_regime_id == USN_AGENT_TAX_REGIME:
+            if taxes == "agreement":
+                base = subtotal * 0.10
+            else:
+                base = subtotal
+            usn_6 = round(base * 0.06, 2)
+            pfr_1 = round(base * 0.01, 2)
+            result = {
+                "usn_6": usn_6,
+                "pfr_1": pfr_1,
+                "base": round(base, 2),
+            }
+
+        result["total"] = round(sum(v for k, v in result.items() if k != "base"), 2)
+        return result
+
+    @staticmethod
+    def _calc_net_profit(tax_regime_id: str | None, payment_mode: str | None, taxes: str | None, products, deliveries, services) -> float:
+        subtotal = DealServiceManager._calc_subtotal(products, deliveries, services)
+        total_purchase = DealServiceManager._calc_total_purchase(products, deliveries, services)
+        total_tax = DealServiceManager._calc_total_tax(tax_regime_id, taxes, products, deliveries, services)["total"]
+        acquiring = DealServiceManager._calc_acquiring(payment_mode or "cash", products, deliveries, services)
+        return round(subtotal - total_purchase - total_tax - acquiring, 2)
 
     def _serialize_products(self, rows: list[DealProduct]):
         nomenclature = self.repo.get_nomenclature([row.nomenclature_id for row in rows if row.nomenclature_id])
@@ -257,6 +390,9 @@ class DealServiceManager:
                 normalized[field_name] = None
         if normalized.get("status_id") == "":
             normalized.pop("status_id", None)
+        for field_name in ("payment_mode", "taxes"):
+            if field_name in normalized and normalized[field_name] == "":
+                normalized.pop(field_name, None)
         return normalized
 
     def _get_users_map(self, user_ids: list[str]):

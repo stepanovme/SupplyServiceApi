@@ -78,6 +78,7 @@ class InvoicePayment(SupplyBase):
     paid_by = Column(CHAR(36), nullable=True, index=True)
     paid_at = Column(DateTime, nullable=True)
     file_id = Column(CHAR(36), nullable=True, index=True)
+    priority = Column(Integer, nullable=False, default=2)
 
 
 class InvoiceCreate(BaseModel):
@@ -181,6 +182,7 @@ class InvoicePaymentCreate(BaseModel):
     paid_by: str | None = Field(default=None)
     paid_at: datetime | None = Field(default=None)
     file_id: str | None = Field(default=None)
+    priority: int | None = Field(default=None)
 
 
 class InvoicePaymentUpdate(BaseModel):
@@ -191,3 +193,4 @@ class InvoicePaymentUpdate(BaseModel):
     paid_by: str | None = Field(default=None)
     paid_at: datetime | None = Field(default=None)
     file_id: str | None = Field(default=None)
+    priority: int | None = Field(default=None)

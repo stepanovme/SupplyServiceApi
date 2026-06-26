@@ -296,6 +296,7 @@ class CatalogService:
                         upd_item_name = upd_document_item.name
                         break
 
+            # keep item entries for running balance calculation (filtered out later)
             history.append(
                 self._build_movement_history_entry(
                     kind="warehouse_receipt_item",
@@ -337,14 +338,28 @@ class CatalogService:
                     )
                 )
 
+        # sort ascending for running balance calculation
         history.sort(
-            key=lambda row: (
-                row["event_at"] or dt_datetime.min,
-                row["kind"] == "warehouse_receipt_item",
-                row["id"],
-            ),
+            key=lambda row: (row["event_at"] or dt_datetime.min, row["id"]),
+        )
+
+        # compute running total across all receipt items for this nomenclature
+        balance = 0.0
+        for entry in history:
+            entry_qty = entry["quantity"] or 0
+            sign = 1 if entry["movement"] and entry["movement"].startswith("+") else -1 if entry["movement"] and entry["movement"].startswith("-") else 0
+            entry["quantity_before"] = round(balance, 8)
+            balance += sign * entry_qty
+            entry["quantity_after"] = round(balance, 8)
+
+        # sort descending for display
+        history.sort(
+            key=lambda row: (row["event_at"] or dt_datetime.min, row["id"]),
             reverse=True,
         )
+
+        # show only log entries, item entries were needed only for balance calculation
+        history = [entry for entry in history if entry["kind"] == "warehouse_receipt_item_log"]
 
         return {
             "nomenclature_id": nomenclature.id,

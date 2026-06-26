@@ -83,6 +83,96 @@ class InvoiceService:
         invoices = self.repo.get_invoices_by_ids(list(invoice_ids))
         return self._serialize_invoice_list(invoices)
 
+    def get_badge_counts(self, user_id: str):
+        return self.repo.get_badge_counts(user_id)
+
+    def get_my_invoice_payments(self, user_id: str, paid: bool | None = None, limit: int = 100, offset: int = 0):
+        logs = self.repo.get_invoice_logs_by_user(user_id)
+        invoice_ids = {log.invoice_id for log in logs}
+
+        all_invoices = self.repo.get_invoices()
+        managed_level_ids = self._get_supply_manager_level_ids(user_id)
+        request_meta = self.repo.get_requests_meta_by_ids(
+            [invoice.request_id for invoice in all_invoices if invoice.request_id is not None]
+        )
+        for invoice in all_invoices:
+            if invoice.created_by == user_id:
+                invoice_ids.add(invoice.id)
+                continue
+            if managed_level_ids:
+                object_levels_id = invoice.object_levels_id
+                if not object_levels_id and invoice.request_id is not None:
+                    object_levels_id = request_meta.get(invoice.request_id, {}).get("object_levels_id")
+                if object_levels_id in managed_level_ids:
+                    invoice_ids.add(invoice.id)
+
+        if not invoice_ids:
+            return []
+
+        invoices_map = {inv.id: inv for inv in self.repo.get_invoices_by_ids(list(invoice_ids))}
+
+        payments = self.repo.get_invoice_payments_by_invoice_ids(list(invoice_ids))
+
+        # collect user ids and counterparty ids
+        user_ids: set[str] = set()
+        counterparty_ids: set[str] = set()
+        for payment in payments:
+            if payment.created_by:
+                user_ids.add(payment.created_by)
+            if payment.paid_by:
+                user_ids.add(payment.paid_by)
+            invoice = invoices_map.get(payment.invoice_id)
+            if invoice:
+                if invoice.created_by:
+                    user_ids.add(invoice.created_by)
+                if invoice.from_by:
+                    user_ids.add(invoice.from_by)
+                if invoice.provider_id:
+                    counterparty_ids.add(invoice.provider_id)
+                if invoice.payer_id:
+                    counterparty_ids.add(invoice.payer_id)
+
+        users_by_id = self._get_users_map(list(user_ids))
+        counterparty_names = self.reference_repo.get_counterparty_names(list(counterparty_ids)) if self.reference_repo else {}
+
+        result = []
+        for payment in payments:
+            invoice = invoices_map.get(payment.invoice_id)
+            if not invoice:
+                continue
+            is_paid = payment.paid_at is not None
+            if paid is not None and paid != is_paid:
+                continue
+            result.append({
+                "payment": self._map_payment(payment, users_by_id),
+                "invoice": {
+                    "id": invoice.id,
+                    "num": invoice.num,
+                    "date": invoice.date,
+                    "total_amount": invoice.total_amount,
+                    "provider_id": invoice.provider_id,
+                    "provider_name": counterparty_names.get(invoice.provider_id),
+                    "payer_id": invoice.payer_id,
+                    "payer_name": counterparty_names.get(invoice.payer_id),
+                    "from_by": invoice.from_by,
+                    "from_by_user": self._map_user(users_by_id.get(invoice.from_by)),
+                },
+            })
+
+        sort_key = "updated_at" if paid is not None else "created_at"
+        result.sort(key=lambda row: (row["payment"][sort_key] or datetime.min), reverse=True)
+        return result
+
+    def _push_badge_for_invoice_users(self, invoice_id: int) -> None:
+        from app.services.ws_manager import ws_manager
+        logs = self.repo.get_invoice_logs(invoice_id)
+        seen = set()
+        for log in logs:
+            if log.user_id and log.user_id not in seen:
+                seen.add(log.user_id)
+                counts = self.repo.get_badge_counts(log.user_id)
+                ws_manager.send_badge_counts(log.user_id, counts)
+
     def parse_invoice_file_and_update(self, invoice_id: int, file_path: str, user_id: str):
         invoice = self.repo.get_invoice_by_id(invoice_id)
         if not invoice:
@@ -638,7 +728,7 @@ class InvoiceService:
         data = payload.model_dump(exclude_unset=True)
         created = self.repo.create_invoice_log(invoice_id, data)
         users_by_id = self._get_users_map([created.user_id])
-        return {
+        result = {
             "id": created.id,
             "invoice_id": created.invoice_id,
             "user_id": created.user_id,
@@ -647,6 +737,11 @@ class InvoiceService:
             "status_name": created.status_name,
             "date_response": created.date_response,
         }
+        if created.user_id:
+            from app.services.ws_manager import ws_manager
+            counts = self.repo.get_badge_counts(created.user_id)
+            ws_manager.send_badge_counts(created.user_id, counts)
+        return result
 
     def update_invoice_log(self, invoice_id: int, log_id: str, payload: InvoiceLogUpdate):
         row = self.repo.get_invoice_log_by_id(invoice_id, log_id)
@@ -659,7 +754,7 @@ class InvoiceService:
 
         updated = self.repo.save_invoice_log(row)
         users_by_id = self._get_users_map([updated.user_id])
-        return {
+        result = {
             "id": updated.id,
             "invoice_id": updated.invoice_id,
             "user_id": updated.user_id,
@@ -668,12 +763,22 @@ class InvoiceService:
             "status_name": updated.status_name,
             "date_response": updated.date_response,
         }
+        if updated.user_id:
+            from app.services.ws_manager import ws_manager
+            counts = self.repo.get_badge_counts(updated.user_id)
+            ws_manager.send_badge_counts(updated.user_id, counts)
+        return result
 
     def delete_invoice_log(self, invoice_id: int, log_id: str):
         row = self.repo.get_invoice_log_by_id(invoice_id, log_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice log not found")
+        target_user_id = row.user_id
         self.repo.delete_invoice_log(row)
+        if target_user_id:
+            from app.services.ws_manager import ws_manager
+            counts = self.repo.get_badge_counts(target_user_id)
+            ws_manager.send_badge_counts(target_user_id, counts)
         return None
 
     def create_invoice_payment(self, invoice_id: int, payload: InvoicePaymentCreate, created_by: str):
@@ -688,7 +793,9 @@ class InvoiceService:
         users_by_id = self._get_users_map(
             [user_id for user_id in [created.created_by, created.paid_by] if user_id]
         )
-        return self._map_payment(created, users_by_id)
+        result = self._map_payment(created, users_by_id)
+        self._push_badge_for_invoice_users(invoice_id)
+        return result
 
     def update_invoice_payment(self, invoice_id: int, payment_id: str, payload: InvoicePaymentUpdate):
         row = self.repo.get_invoice_payment_by_id(invoice_id, payment_id)
@@ -703,13 +810,16 @@ class InvoiceService:
         users_by_id = self._get_users_map(
             [user_id for user_id in [updated.created_by, updated.paid_by] if user_id]
         )
-        return self._map_payment(updated, users_by_id)
+        result = self._map_payment(updated, users_by_id)
+        self._push_badge_for_invoice_users(invoice_id)
+        return result
 
     def delete_invoice_payment(self, invoice_id: int, payment_id: str):
         row = self.repo.get_invoice_payment_by_id(invoice_id, payment_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice payment not found")
         self.repo.delete_invoice_payment(row)
+        self._push_badge_for_invoice_users(invoice_id)
         return None
 
     def get_invoice(self, invoice_id: int):
@@ -1093,6 +1203,7 @@ class InvoiceService:
             "paid_by_user": self._map_user(users_by_id.get(payment.paid_by)),
             "paid_at": payment.paid_at,
             "file_id": payment.file_id,
+            "priority": payment.priority,
         }
 
     @staticmethod

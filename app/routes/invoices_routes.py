@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import ValidationError
@@ -74,6 +74,37 @@ def get_my_invoices(
 ):
     service = build_invoice_service(supply_db, auth_db, reference_db)
     return service.get_available_for_user(str(session.user_id))
+
+
+@invoices_router.get(
+    "/my/badge",
+    status_code=status.HTTP_200_OK,
+    summary="Получить количество счетов требующих действий",
+)
+def get_my_invoices_badge(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.get_badge_counts(str(session.user_id))
+
+
+@invoices_router.get(
+    "/my/payments",
+    status_code=status.HTTP_200_OK,
+    summary="Получить платежи по доступным мне счетам",
+)
+def get_my_invoice_payments(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    session: SessionDB = Depends(get_session),
+    paid: bool | None = Query(default=None, description="true — оплаченные, false — неоплаченные"),
+):
+    service = build_invoice_service(supply_db, auth_db, reference_db)
+    return service.get_my_invoice_payments(str(session.user_id), paid=paid)
 
 
 @invoices_router.post(

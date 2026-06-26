@@ -1,5 +1,17 @@
 from app.models.auth_user import AuthUser
 from app.models.chat import Attachment, Chat, ChatMember, ChatReadStatus, Message, MessageMention
+from app.models.contract import (
+    Contract,
+    ContractFile,
+    ContractFolder,
+    ContractLog,
+    ContractObject,
+    ContractParty,
+    ContractUserRole,
+    ContractWorkType,
+    DocumentType,
+    WorkContract,
+)
 from app.models.deal import Deal, DealDelivery, DealProduct, DealService
 from app.models.delivery import Delivery, DeliveryItem
 from app.models.delivery_item_mapping import DeliveryItemMapping
