@@ -14,6 +14,8 @@ from app.models.contract import (
     ContractObjectUpdate,
     ContractPartyCreate,
     ContractPartyUpdate,
+    ContractStatusCreate,
+    ContractStatusUpdate,
     ContractUpdate,
     ContractUserRoleCreate,
     ContractUserRoleUpdate,
@@ -214,7 +216,7 @@ def delete_party(
     supply_db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    build_service(supply_db).delete_party(party_id)
+    build_service(supply_db).delete_party(party_id, _session.user_id)
     return None
 
 
@@ -267,7 +269,7 @@ def delete_user_role(
     supply_db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    build_service(supply_db).delete_user_role(role_id)
+    build_service(supply_db).delete_user_role(role_id, _session.user_id)
     return None
 
 
@@ -309,7 +311,7 @@ def delete_work_contract(
     supply_db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    build_service(supply_db).delete_work_contract(wc_id)
+    build_service(supply_db).delete_work_contract(wc_id, _session.user_id)
     return None
 
 
@@ -339,7 +341,7 @@ def create_contract_object(
     supply_db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    return build_service(supply_db).create_contract_object(payload)
+    return build_service(supply_db).create_contract_object(payload, _session.user_id)
 
 
 @contracts_router.patch("/contract-objects/{obj_id}", status_code=status.HTTP_200_OK)
@@ -358,7 +360,47 @@ def delete_contract_object(
     supply_db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    build_service(supply_db).delete_contract_object(obj_id)
+    build_service(supply_db).delete_contract_object(obj_id, _session.user_id)
+    return None
+
+
+# --- ContractStatus ---
+
+@contracts_router.get("/contract-statuses", status_code=status.HTTP_200_OK)
+def get_contract_statuses(
+    contract_id: int | None = Query(default=None),
+    supply_db: DbSupplySession = None,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db).get_contract_statuses(contract_id)
+
+
+@contracts_router.post("/contract-statuses", status_code=status.HTTP_201_CREATED)
+def create_contract_status(
+    payload: ContractStatusCreate,
+    supply_db: DbSupplySession = None,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db).create_contract_status(payload, _session.user_id)
+
+
+@contracts_router.patch("/contract-statuses/{status_id}", status_code=status.HTTP_200_OK)
+def update_contract_status(
+    status_id: str,
+    payload: ContractStatusUpdate,
+    supply_db: DbSupplySession = None,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db).update_contract_status(status_id, payload, _session.user_id)
+
+
+@contracts_router.delete("/contract-statuses/{status_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_contract_status(
+    status_id: str,
+    supply_db: DbSupplySession = None,
+    _session=Depends(get_session),
+):
+    build_service(supply_db).delete_contract_status(status_id, _session.user_id)
     return None
 
 
@@ -424,7 +466,7 @@ def delete_contract(
     supply_db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    build_service(supply_db).delete_contract(contract_id)
+    build_service(supply_db).delete_contract(contract_id, _session.user_id)
     return None
 
 
@@ -503,6 +545,15 @@ def get_files(
     return build_service(supply_db).get_files(contract_id, folder_id)
 
 
+@contracts_router.get("/contract-files/history", status_code=status.HTTP_200_OK)
+def get_files_history(
+    contract_id: int = Query(...),
+    supply_db: DbSupplySession = None,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db).get_files_history(contract_id)
+
+
 @contracts_router.get("/contract-files/{file_id}", status_code=status.HTTP_200_OK)
 def get_file(
     file_id: str,
@@ -519,6 +570,7 @@ async def upload_files(
     _session=Depends(get_session),
     contract_id: int = Form(...),
     contract_folder_id: str | None = Form(default=None),
+    type: str | None = Form(default=None),
 ):
     service = build_service(supply_db)
     results = []
@@ -530,6 +582,7 @@ async def upload_files(
             original_name=f.filename or "file",
             file_bytes=file_bytes,
             uploaded_by=_session.user_id,
+            file_type=type,
         ))
     return results
 
@@ -562,3 +615,13 @@ def download_file(
 ):
     file_path, original_name = build_service(supply_db).get_download(file_id)
     return FileResponse(file_path, filename=original_name)
+
+
+@contracts_router.get("/contract-files/{file_id}/preview", status_code=status.HTTP_200_OK)
+def preview_file(
+    file_id: str,
+    supply_db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    file_path = build_service(supply_db).get_preview(file_id)
+    return FileResponse(file_path, media_type="application/pdf")

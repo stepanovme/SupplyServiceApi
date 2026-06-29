@@ -7,6 +7,7 @@ from app.models.contract import (
     ContractLog,
     ContractObject,
     ContractParty,
+    ContractStatus,
     ContractUserRole,
     ContractWorkType,
     DocumentType,

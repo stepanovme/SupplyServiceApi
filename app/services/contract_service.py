@@ -1,6 +1,6 @@
 import os
+import subprocess
 import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import HTTPException, status
@@ -15,6 +15,8 @@ from app.models.contract import (
     ContractObjectUpdate,
     ContractPartyCreate,
     ContractPartyUpdate,
+    ContractStatusCreate,
+    ContractStatusUpdate,
     ContractUpdate,
     ContractUserRoleCreate,
     ContractUserRoleUpdate,
@@ -23,6 +25,7 @@ from app.models.contract import (
     DocumentTypeCreate,
     DocumentTypeUpdate,
     WorkContractCreate,
+    msk_now,
 )
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.contract_repository import ContractRepository
@@ -109,7 +112,7 @@ class ContractService:
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         row.updated_by = user_id
         updated = self.repo.save_work_type(row)
         if "name" in data and old_name != data["name"]:
@@ -171,7 +174,7 @@ class ContractService:
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         row.updated_by = user_id
         updated = self.repo.save_document_type(row)
         if "name" in data and old_name != data["name"]:
@@ -248,6 +251,8 @@ class ContractService:
         data["created_by"] = created_by
         created = self.repo.create_party(data)
         counterparty_names = self._get_counterparty_names([created.counterparties_id])
+        org_name = counterparty_names.get(created.counterparties_id, "")
+        self.repo.create_log(created.contract_id, "contract", f"добавил сторону договора {created.name} {org_name}".strip(), created_by)
         users_by_id = self._get_users_map([created.created_by])
         return self._serialize_party(created, counterparty_names, users_by_id)
 
@@ -255,22 +260,28 @@ class ContractService:
         row = self.repo.get_party_by_id(party_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Party not found")
+        old_name = row.name
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         row.updated_by = user_id
         updated = self.repo.save_party(row)
+        if "name" in data and data["name"] != old_name:
+            self.repo.create_log(updated.contract_id, "contract", f"изменил название стороны договора с {old_name} на {data['name']}", user_id)
         counterparty_names = self._get_counterparty_names([updated.counterparties_id])
         user_ids = {updated.created_by, updated.updated_by}
         users_by_id = self._get_users_map(list(user_ids))
         return self._serialize_party(updated, counterparty_names, users_by_id)
 
-    def delete_party(self, party_id: str):
+    def delete_party(self, party_id: str, user_id: str):
         row = self.repo.get_party_by_id(party_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Party not found")
+        contract_id = row.contract_id
+        name = row.name
         self.repo.delete_party(row)
+        self.repo.create_log(contract_id, "contract", f"удалил сторону договора {name}", user_id)
 
     def _serialize_party(self, row, counterparty_names: dict, users_by_id: dict):
         return {
@@ -306,25 +317,37 @@ class ContractService:
         data = payload.model_dump(exclude_unset=True)
         data["created_by"] = created_by
         created = self.repo.create_user_role(data)
+        self._sync_information_status(created.contract_id, created_by)
         users_by_id = self._get_users_map([created.user_id, created.created_by])
+        user_info = users_by_id.get(created.user_id)
+        user_name = user_info.get("short_fio", created.user_id) if user_info else created.user_id
+        self.repo.create_log(created.contract_id, "contract", f"добавил роль {created.role} для {user_name}", created_by)
         return self._serialize_user_role(created, users_by_id)
 
     def update_user_role(self, role_id: str, payload: ContractUserRoleUpdate, user_id: str):
         row = self.repo.get_user_role_by_id(role_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User role not found")
+        old_role = row.role
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
         updated = self.repo.save_user_role(row)
+        if "role" in data and data["role"] != old_role:
+            self.repo.create_log(updated.contract_id, "contract", f"изменил роль с {old_role} на {data['role']}", user_id)
+        self._sync_information_status(updated.contract_id, user_id)
         users_by_id = self._get_users_map([updated.user_id, updated.created_by])
         return self._serialize_user_role(updated, users_by_id)
 
-    def delete_user_role(self, role_id: str):
+    def delete_user_role(self, role_id: str, user_id: str):
         row = self.repo.get_user_role_by_id(role_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User role not found")
+        contract_id = row.contract_id
+        role = row.role
         self.repo.delete_user_role(row)
+        self._sync_information_status(contract_id, user_id)
+        self.repo.create_log(contract_id, "contract", f"удалил роль {role}", user_id)
 
     def _serialize_user_role(self, row, users_by_id: dict):
         return {
@@ -361,16 +384,23 @@ class ContractService:
         data = payload.model_dump(exclude_unset=True)
         data["created_by"] = created_by
         created = self.repo.create_work_contract(data)
+        self._sync_information_status(created.contract_id, created_by)
         work_type = self.repo.get_work_type_by_id(created.contract_work_type_id)
-        work_type_name = work_type.name if work_type else None
+        work_type_name = work_type.name if work_type else str(created.contract_work_type_id)
+        self.repo.create_log(created.contract_id, "contract", f"добавил вид работ {work_type_name}", created_by)
         users_by_id = self._get_users_map([created.created_by])
         return self._serialize_work_contract(created, {created.contract_work_type_id: work_type_name} if work_type_name else {}, users_by_id)
 
-    def delete_work_contract(self, wc_id: str):
+    def delete_work_contract(self, wc_id: str, user_id: str):
         row = self.repo.get_work_contract_by_id(wc_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Work contract not found")
+        contract_id = row.contract_id
+        work_type = self.repo.get_work_type_by_id(row.contract_work_type_id)
+        work_type_name = work_type.name if work_type else str(row.contract_work_type_id)
         self.repo.delete_work_contract(row)
+        self._sync_information_status(contract_id, user_id)
+        self.repo.create_log(contract_id, "contract", f"удалил вид работ {work_type_name}", user_id)
 
     def _serialize_work_contract(self, row, work_types: dict, users_by_id: dict):
         return {
@@ -395,9 +425,12 @@ class ContractService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract object not found")
         return self._serialize_contract_object(row)
 
-    def create_contract_object(self, payload: ContractObjectCreate):
+    def create_contract_object(self, payload: ContractObjectCreate, created_by: str):
         data = payload.model_dump(exclude_unset=True)
         created = self.repo.create_contract_object(data)
+        self._sync_information_status(created.contract_id, created_by)
+        object_name = self._resolve_object_name(created)
+        self.repo.create_log(created.contract_id, "contract", f"добавил объект {object_name or created.object_id}", created_by)
         return self._serialize_contract_object(created)
 
     def update_contract_object(self, obj_id: int, payload: ContractObjectUpdate):
@@ -410,11 +443,91 @@ class ContractService:
         updated = self.repo.save_contract_object(row)
         return self._serialize_contract_object(updated)
 
-    def delete_contract_object(self, obj_id: int):
+    def delete_contract_object(self, obj_id: int, user_id: str):
         row = self.repo.get_contract_object_by_id(obj_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract object not found")
+        contract_id = row.contract_id
+        object_name = self._resolve_object_name(row)
         self.repo.delete_contract_object(row)
+        self._sync_information_status(contract_id, user_id)
+        self.repo.create_log(contract_id, "contract", f"удалил объект {object_name or row.object_id}", user_id)
+
+    # --- ContractStatus ---
+
+    def get_contract_statuses(self, contract_id: int | None = None):
+        rows = self.repo.get_contract_statuses(contract_id)
+        return [self._serialize_contract_status(r) for r in rows]
+
+    def create_contract_status(self, payload: ContractStatusCreate, created_by: str):
+        data = payload.model_dump(exclude_unset=True)
+        data["created_by"] = created_by
+        created = self.repo.create_contract_status(data)
+        self.repo.create_log(created.contract_id, "contract", f"присвоил статус {self.STATUS_LABELS.get(created.status, created.status)}", created_by)
+        return self._serialize_contract_status(created)
+
+    def update_contract_status(self, status_id: str, payload: ContractStatusUpdate, user_id: str):
+        row = self.repo.get_contract_status_by_id(status_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract status not found")
+        old_status = row.status
+        data = payload.model_dump(exclude_unset=True)
+        for key, value in data.items():
+            setattr(row, key, value)
+        updated = self.repo.save_contract_status(row)
+        if "status" in data and data["status"] != old_status:
+            self.repo.create_log(updated.contract_id, "contract", f"изменил статус с {self.STATUS_LABELS.get(old_status, old_status)} на {self.STATUS_LABELS.get(data['status'], data['status'])}", user_id)
+        return self._serialize_contract_status(updated)
+
+    def delete_contract_status(self, status_id: str, user_id: str):
+        row = self.repo.get_contract_status_by_id(status_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract status not found")
+        contract_id = row.contract_id
+        status_label = self.STATUS_LABELS.get(row.status, row.status)
+        self.repo.delete_contract_status(row)
+        self.repo.create_log(contract_id, "contract", f"удалил статус {status_label}", user_id)
+
+    STATUS_LABELS = {"information": "Заполнен", "signed": "Подписан", "original": "Оригинал", "verified": "Сверен"}
+
+    def _sync_information_status(self, contract_id: int, user_id: str):
+        contract = self.repo.get_contract_by_id(contract_id)
+        if not contract:
+            return
+
+        has_data = (
+            contract.internal_num
+            and contract.document_type_id
+            and contract.date
+            and contract.sum is not None
+            and self.repo.get_work_contracts(contract_id=contract_id)
+            and self.repo.get_user_roles(contract_id=contract_id, role="executor")
+            and self.repo.get_contract_objects(contract_id=contract_id)
+        )
+
+        existing = [s for s in self.repo.get_contract_statuses(contract_id=contract_id) if s.status == "information"]
+        info_status = existing[0] if existing else None
+
+        if has_data and not info_status:
+            self.repo.create_contract_status({
+                "contract_id": contract_id,
+                "status": "information",
+                "created_by": user_id,
+            })
+            self.repo.create_log(contract_id, "contract", f"присвоил статус {self.STATUS_LABELS['information']}", user_id)
+        elif not has_data and info_status:
+            self.repo.delete_contract_status(info_status)
+            self.repo.create_log(contract_id, "contract", f"удалил статус {self.STATUS_LABELS['information']}", user_id)
+
+    @staticmethod
+    def _serialize_contract_status(row):
+        return {
+            "id": row.id,
+            "contract_id": row.contract_id,
+            "status": row.status,
+            "created_at": row.created_at,
+            "created_by": row.created_by,
+        }
 
     # --- Contract ---
 
@@ -432,6 +545,7 @@ class ContractService:
         ids = self.repo.get_contract_ids_by_user(user_id)
         if not ids:
             return []
+        ids.sort(reverse=True)
         rows = [self.repo.get_contract_by_id(cid) for cid in ids]
         rows = [r for r in rows if r]
         return [self._build_contract_response(r, detail=True) for r in rows]
@@ -450,6 +564,8 @@ class ContractService:
         users_by_id = self._get_users_map(list(user_ids))
 
         full_name = " ".join(part for part in [doc_type_name, row.name, "№", row.num] if part).strip()
+
+        statuses = [self._serialize_contract_status(s) for s in self.repo.get_contract_statuses(contract_id=row.id)]
 
         result = {
             "id": row.id,
@@ -470,6 +586,7 @@ class ContractService:
             "type": row.type,
             "sum": row.sum,
             "comment": row.comment,
+            "statuses": statuses,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
             "created_by": row.created_by,
@@ -509,7 +626,7 @@ class ContractService:
                 self._serialize_work_contract(wc, work_types_map, users_by_id) for wc in self.repo.get_work_contracts(contract_id=row.id)
             ]
             result["objects"] = [
-                self._serialize_contract_object(o, self.reference_repo) for o in self.repo.get_contract_objects(contract_id=row.id)
+                self._serialize_contract_object(o) for o in self.repo.get_contract_objects(contract_id=row.id)
             ]
 
         return result
@@ -523,10 +640,10 @@ class ContractService:
 
         if contractor_internal:
             data["type"] = "buyer"
-            data["internal_num"] = self.repo.count_contracts_by_internal_party(data["contractor_id"]) + 1
+            data["internal_num"] = self.repo.count_contracts_by_internal_party(data["contractor_id"], "contractor") + 1
         elif customer_internal:
             data["type"] = "provider"
-            data["internal_num"] = self.repo.count_contracts_by_internal_party(data["customer_id"]) + 1
+            data["internal_num"] = self.repo.count_contracts_by_internal_party(data["customer_id"], "customer") + 1
 
         created = self.repo.create_contract(data)
         doc_type_name = None
@@ -542,17 +659,105 @@ class ContractService:
         row = self.repo.get_contract_by_id(contract_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+
+        old = {
+            "num": row.num,
+            "internal_num": row.internal_num,
+            "date": row.date,
+            "document_type_id": row.document_type_id,
+            "name": row.name,
+            "customer_id": row.customer_id,
+            "contractor_id": row.contractor_id,
+            "type": row.type,
+            "sum": row.sum,
+            "comment": row.comment,
+        }
+
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         updated = self.repo.save_contract(row)
+
+        logs = []
+        type_labels = {"provider": "поставщик", "buyer": "покупатель"}
+
+        if "customer_id" in data and data["customer_id"] != old["customer_id"]:
+            names = self._get_counterparty_names([old["customer_id"], data["customer_id"]])
+            logs.append(f"изменил заказчика с {names.get(old['customer_id'], old['customer_id'])} на {names.get(data['customer_id'], data['customer_id'])}")
+
+        if "contractor_id" in data and data["contractor_id"] != old["contractor_id"]:
+            names = self._get_counterparty_names([old["contractor_id"], data["contractor_id"]])
+            logs.append(f"изменил подрядчика с {names.get(old['contractor_id'], old['contractor_id'])} на {names.get(data['contractor_id'], data['contractor_id'])}")
+
+        if "date" in data:
+            old_date_str = old["date"].strftime("%d.%m.%Y") if old["date"] else None
+            new_date_str = data["date"].strftime("%d.%m.%Y") if data["date"] else None
+            if old_date_str != new_date_str:
+                if data["date"] is None:
+                    logs.append(f"удалил дату договора {old_date_str}")
+                elif old["date"] is None:
+                    logs.append(f"добавил дату договора {new_date_str}")
+                else:
+                    logs.append(f"изменил дату договора с {old_date_str} на {new_date_str}")
+
+        if "num" in data and data["num"] != old["num"]:
+            if data["num"] is None and old["num"] is not None:
+                logs.append(f"удалил номер договора {old['num']}")
+            else:
+                logs.append(f"изменил номер договора с {old['num'] or '—'} на {data['num']}")
+
+        if "internal_num" in data and data["internal_num"] != old["internal_num"]:
+            if data["internal_num"] is None and old["internal_num"] is not None:
+                logs.append(f"удалил внутренний номер договора {old['internal_num']}")
+            else:
+                logs.append(f"изменил внутренний номер договора с {old['internal_num'] or '—'} на {data['internal_num']}")
+
+        if "document_type_id" in data and data["document_type_id"] != old["document_type_id"]:
+            old_dt = self.repo.get_document_type_by_id(old["document_type_id"])
+            new_dt = self.repo.get_document_type_by_id(data["document_type_id"])
+            logs.append(f"изменил тип документа с {(old_dt.name if old_dt else old['document_type_id'])} на {(new_dt.name if new_dt else data['document_type_id'])}")
+
+        if "name" in data and data["name"] != old["name"]:
+            if data["name"] is None and old["name"] is not None:
+                logs.append(f"удалил наименование договора {old['name']}")
+            else:
+                logs.append(f"изменил наименование договора с {old['name'] or '—'} на {data['name']}")
+
+        if "type" in data and data["type"] != old["type"]:
+            logs.append(f"изменил тип договора с {type_labels.get(old['type'], old['type'])} на {type_labels.get(data['type'], data['type'])}")
+
+        if "sum" in data and data["sum"] != old["sum"]:
+            if data["sum"] is None and old["sum"] is not None:
+                logs.append(f"удалил сумму договора {old['sum']}")
+            else:
+                logs.append(f"изменил сумму договора с {old['sum'] or '—'} на {data['sum']}")
+
+        if "comment" in data and data["comment"] != old["comment"]:
+            if old["comment"] is None:
+                logs.append(f"добавил примечание: {data['comment']}")
+            else:
+                logs.append(f"изменил примечание с {old['comment']} на {data['comment']}")
+
+        for msg in logs:
+            self.repo.create_log(contract_id, "contract", msg, user_id)
+
+        self._sync_information_status(contract_id, user_id)
+
         return self._build_contract_response(updated)
 
-    def delete_contract(self, contract_id: int):
+    def delete_contract(self, contract_id: int, user_id: str):
         row = self.repo.get_contract_by_id(contract_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+        doc_type_name = None
+        if row.document_type_id:
+            dt = self.repo.get_document_type_by_id(row.document_type_id)
+            if dt:
+                doc_type_name = dt.name
+        parts = [p for p in [doc_type_name, row.name, "№", row.num] if p]
+        full_name = " ".join(parts)
+        self.repo.create_log(contract_id, "contract", f"удалил договор {full_name}", user_id)
         self.repo.delete_contract(row)
 
     # --- ContractFolder ---
@@ -626,7 +831,7 @@ class ContractService:
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         row.updated_by = user_id
         updated = self.repo.save_folder(row)
         if "name" in data and data["name"] != old_name:
@@ -663,13 +868,17 @@ class ContractService:
         rows = self.repo.get_files(contract_id, folder_id)
         return [self._serialize_file(r) for r in rows]
 
+    def get_files_history(self, contract_id: int):
+        rows = self.repo.get_files_history(contract_id)
+        return [self._serialize_file(r) for r in rows]
+
     def get_file(self, file_id: str):
         row = self.repo.get_file_by_id(file_id)
         if not row:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
         return self._serialize_file(row)
 
-    def upload(self, contract_id: int, original_name: str, file_bytes: bytes, uploaded_by: str, contract_folder_id: str | None = None):
+    def upload(self, contract_id: int, original_name: str, file_bytes: bytes, uploaded_by: str, contract_folder_id: str | None = None, file_type: str | None = None):
         extension = Path(original_name).suffix.lower().lstrip(".")
         storage_name = f"{uuid.uuid4().hex}{('.' + extension) if extension else ''}"
         target_dir = os.path.join(BASE_CONTRACT_FILES_DIR, str(contract_id))
@@ -679,6 +888,7 @@ class ContractService:
         with open(file_path, "wb") as f:
             f.write(file_bytes)
 
+        effective_type = file_type if extension in {"pdf", "doc", "docx", "xls", "xlsx"} else None
         created = self.repo.create_file({
             "contract_id": contract_id,
             "contract_folder_id": contract_folder_id,
@@ -687,6 +897,7 @@ class ContractService:
             "extension": extension or None,
             "file_path": file_path,
             "uploaded_by": uploaded_by,
+            "type": effective_type,
         })
         self.repo.create_log(contract_id, "contract", f"загрузил файл {original_name}", uploaded_by)
         return self._serialize_file(created)
@@ -699,6 +910,43 @@ class ContractService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
         return row.file_path, row.original_name
 
+    PREVIEW_EXTENSIONS = {".docx", ".doc", ".xls", ".xlsx", ".pptx"}
+
+    def get_preview(self, file_id: str) -> str:
+        row = self.repo.get_file_by_id(file_id)
+        if not row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+        if not row.file_path or not os.path.exists(row.file_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
+
+        ext = Path(row.file_path).suffix.lower()
+        if ext == ".pdf":
+            return row.file_path
+
+        if ext not in self.PREVIEW_EXTENSIONS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Preview not supported for this file type")
+
+        cached = Path(row.file_path).parent / f"{Path(row.file_path).name}.preview.pdf"
+        if cached.exists():
+            return str(cached)
+
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", str(cached.parent), row.file_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Conversion failed: {result.stderr.strip()}")
+
+        output_name = f"{Path(row.file_path).stem}.pdf"
+        output_path = cached.parent / output_name
+        if output_path.exists():
+            os.rename(str(output_path), str(cached))
+
+        if not cached.exists():
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Conversion produced no output")
+
+        return str(cached)
+
     def update_file(self, file_id: str, payload: ContractFileUpdate, user_id: str):
         row = self.repo.get_file_by_id(file_id)
         if not row:
@@ -707,7 +955,7 @@ class ContractService:
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         row.updated_by = user_id
         updated = self.repo.save_file(row)
         if "original_name" in data and data["original_name"] != old_name:
@@ -742,15 +990,18 @@ class ContractService:
             "updated_by": row.updated_by,
         }
 
+    def _resolve_object_name(self, row):
+        if not self.reference_repo:
+            return None
+        if row.object_type == "object":
+            objs = self.reference_repo.get_objects_by_ids([row.object_id])
+            return objs[0].short_name if objs else None
+        elif row.object_type == "object_levels_id":
+            return self.reference_repo.resolve_object_name(row.object_id)
+        return None
+
     def _serialize_contract_object(self, row, reference_repo=None):
-        object_name = None
-        if reference_repo:
-            if row.object_type == "object":
-                objs = reference_repo.get_objects_by_ids([row.object_id])
-                if objs:
-                    object_name = objs[0].short_name
-            elif row.object_type == "object_levels_id":
-                object_name = reference_repo.resolve_object_name(row.object_id)
+        object_name = self._resolve_object_name(row)
         return {
             "id": row.id,
             "contract_id": row.contract_id,

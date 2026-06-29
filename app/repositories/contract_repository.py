@@ -1,5 +1,4 @@
 import uuid
-from datetime import datetime, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -10,10 +9,12 @@ from app.models.contract import (
     ContractLog,
     ContractObject,
     ContractParty,
+    ContractStatus,
     ContractUserRole,
     ContractWorkType,
     DocumentType,
     WorkContract,
+    msk_now,
 )
 
 
@@ -25,7 +26,7 @@ class ContractRepository:
         return self.db.query(Contract).filter(Contract.id == contract_id).first()
 
     def get_contracts(self) -> list[Contract]:
-        return self.db.query(Contract).order_by(Contract.created_at.desc()).all()
+        return self.db.query(Contract).order_by(Contract.id.desc()).all()
 
     def get_contract_ids_by_user(self, user_id: str) -> list[int]:
         from sqlalchemy import union
@@ -36,10 +37,11 @@ class ContractRepository:
         rows = self.db.query(Contract.id).filter(Contract.id.in_(union_q)).all()
         return [row[0] for row in rows]
 
-    def count_contracts_by_internal_party(self, counterparty_id: str) -> int:
+    def count_contracts_by_internal_party(self, counterparty_id: str, role: str) -> int:
         from sqlalchemy import func
+        column = Contract.customer_id if role == "customer" else Contract.contractor_id
         return self.db.query(func.count(Contract.id)).filter(
-            (Contract.contractor_id == counterparty_id) | (Contract.customer_id == counterparty_id)
+            column == counterparty_id
         ).scalar() or 0
 
     def create_contract(self, payload: dict) -> Contract:
@@ -114,7 +116,7 @@ class ContractRepository:
             log_object_id=log_object_id,
             log_object_type=log_object_type,
             message=message,
-            created_at=datetime.utcnow() + timedelta(hours=3),
+            created_at=msk_now(),
             created_by=created_by,
         )
         self.db.add(row)
@@ -166,10 +168,12 @@ class ContractRepository:
 
     # --- ContractUserRole ---
 
-    def get_user_roles(self, contract_id: int | None = None) -> list[ContractUserRole]:
+    def get_user_roles(self, contract_id: int | None = None, role: str | None = None) -> list[ContractUserRole]:
         q = self.db.query(ContractUserRole)
         if contract_id is not None:
             q = q.filter(ContractUserRole.contract_id == contract_id)
+        if role is not None:
+            q = q.filter(ContractUserRole.role == role)
         return q.order_by(ContractUserRole.created_at.desc()).all()
 
     def get_user_role_by_id(self, role_id: str) -> ContractUserRole | None:
@@ -280,6 +284,14 @@ class ContractRepository:
     def get_file_by_id(self, file_id: str) -> ContractFile | None:
         return self.db.query(ContractFile).filter(ContractFile.id == file_id).first()
 
+    def get_files_history(self, contract_id: int) -> list[ContractFile]:
+        return (
+            self.db.query(ContractFile)
+            .filter(ContractFile.contract_id == contract_id, ContractFile.type.in_(["original", "version"]))
+            .order_by(ContractFile.uploaded_at.desc())
+            .all()
+        )
+
     def create_file(self, payload: dict) -> ContractFile:
         row = ContractFile(id=str(uuid.uuid4()), **payload)
         self.db.add(row)
@@ -295,3 +307,30 @@ class ContractRepository:
     def delete_file(self, row: ContractFile) -> None:
         self.db.delete(row)
         self.db.commit()
+
+    # --- ContractStatus ---
+
+    def get_contract_statuses(self, contract_id: int | None = None) -> list[ContractStatus]:
+        q = self.db.query(ContractStatus)
+        if contract_id is not None:
+            q = q.filter(ContractStatus.contract_id == contract_id)
+        return q.order_by(ContractStatus.created_at.desc()).all()
+
+    def get_contract_status_by_id(self, status_id: str) -> ContractStatus | None:
+        return self.db.query(ContractStatus).filter(ContractStatus.id == status_id).first()
+
+    def create_contract_status(self, payload: dict) -> ContractStatus:
+        row = ContractStatus(id=str(uuid.uuid4()), **payload)
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    def delete_contract_status(self, row: ContractStatus) -> None:
+        self.db.delete(row)
+        self.db.commit()
+
+    def save_contract_status(self, row: ContractStatus) -> ContractStatus:
+        self.db.commit()
+        self.db.refresh(row)
+        return row
