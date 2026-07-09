@@ -1,4 +1,5 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import html
 import os
@@ -250,7 +251,7 @@ class RequestSupplierService:
         data = payload.model_dump(exclude_unset=True)
         for key, value in data.items():
             setattr(row, key, value)
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         updated = self.repo.save_link(row)
         return self._serialize_link(updated)
 
@@ -339,7 +340,7 @@ class RequestSupplierService:
                 )
                 sent_count += 1
 
-        row.sent_at = datetime.utcnow()
+        row.sent_at = msk_now()
         row.sent_by = user_id
         self.repo.save(row)
 

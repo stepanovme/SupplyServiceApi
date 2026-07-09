@@ -226,6 +226,11 @@ class ChatRepository:
         row = self.db.query(Deal.name, Deal.object_id).filter(Deal.id == deal_id).first()
         return row
 
+    def get_task_name(self, task_id: str) -> str | None:
+        from app.models.task import Task
+        row = self.db.query(Task.name).filter(Task.id == task_id).first()
+        return row[0] if row else None
+
     def get_unviewed_mentions_count(self, chat_id: int, user_id: str) -> int:
         return (
             self.db.query(MessageMention)

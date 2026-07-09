@@ -156,7 +156,7 @@ def get_logs(
     supply_db: DbSupplySession,
     auth_db: DbAuthSession,
     _session=Depends(get_session),
-    log_object_id: int | None = Query(default=None),
+    log_object_id: str | None = Query(default=None),
     log_object_type: str | None = Query(default=None),
     created_by: str | None = Query(default=None),
 ):
@@ -543,6 +543,14 @@ def get_files(
     folder_id: str | None = Query(default=None),
 ):
     return build_service(supply_db).get_files(contract_id, folder_id)
+
+
+@contracts_router.get("/contract-files/my", status_code=status.HTTP_200_OK)
+def get_my_contract_files(
+    supply_db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db).get_my_files(_session.user_id)
 
 
 @contracts_router.get("/contract-files/history", status_code=status.HTTP_200_OK)

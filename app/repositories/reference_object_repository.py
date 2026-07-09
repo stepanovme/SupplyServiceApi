@@ -1,6 +1,17 @@
 from sqlalchemy.orm import Session
 
-from app.models.reference_object import ContractRef, CounterpartyRef, ObjectLevel, RefObject, WorkTypeRef
+from app.models.reference_object import (
+    BankAccount,
+    ContractRef,
+    CounterpartyRef,
+    DetailsIP,
+    DetailsLLC,
+    Employee,
+    ObjectLevel,
+    Person,
+    RefObject,
+    WorkTypeRef,
+)
 
 
 class ReferenceObjectRepository:
@@ -65,6 +76,28 @@ class ReferenceObjectRepository:
     def is_counterparty_internal(self, counterparty_id: str) -> bool:
         row = self.db.query(CounterpartyRef.is_internal).filter(CounterpartyRef.id == counterparty_id).first()
         return row is not None and row.is_internal == 1
+
+    def get_counterparty_type(self, counterparty_id: str) -> str | None:
+        row = self.db.query(CounterpartyRef.type).filter(CounterpartyRef.id == counterparty_id).first()
+        return row[0] if row else None
+
+    def get_details_llc(self, counterparty_id: str) -> DetailsLLC | None:
+        return self.db.query(DetailsLLC).filter(DetailsLLC.counterparties_id == counterparty_id).first()
+
+    def get_details_ip(self, counterparty_id: str) -> DetailsIP | None:
+        return self.db.query(DetailsIP).filter(DetailsIP.counterparty_id == counterparty_id).first()
+
+    def get_person(self, person_id: str) -> Person | None:
+        return self.db.query(Person).filter(Person.id == person_id).first()
+
+    def get_employee(self, person_id: str, counterparty_id: str) -> Employee | None:
+        return self.db.query(Employee).filter(
+            Employee.person_id == person_id,
+            Employee.counterparty_id == counterparty_id,
+        ).first()
+
+    def get_bank_accounts(self, counterparty_id: str) -> list[BankAccount]:
+        return self.db.query(BankAccount).filter(BankAccount.counterparty_id == counterparty_id).all()
 
     def resolve_object_name(self, object_level_id: str) -> str | None:
         level = self.db.query(ObjectLevel).filter(ObjectLevel.id == object_level_id).first()

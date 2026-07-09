@@ -1,3 +1,4 @@
+from app.database import msk_now
 import uuid
 from datetime import datetime
 
@@ -31,7 +32,7 @@ class InvoiceRepository:
         return self.db.query(Invoice).filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.id.desc()).all()
 
     def save_invoice(self, row: Invoice) -> Invoice:
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         self.db.commit()
         self.db.refresh(row)
         return row
@@ -211,7 +212,7 @@ class InvoiceRepository:
         )
 
     def save_invoice_payment(self, row: InvoicePayment) -> InvoicePayment:
-        row.updated_at = datetime.utcnow()
+        row.updated_at = msk_now()
         self.db.commit()
         self.db.refresh(row)
         return row

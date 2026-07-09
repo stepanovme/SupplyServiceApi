@@ -1,7 +1,8 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, DateTime, ForeignKey, Float, Integer, Text
@@ -19,7 +20,7 @@ class Specification(SupplyBase):
     name = Column(Text, nullable=True)
     comment = Column(Text, nullable=True)
     object_levels_id = Column(CHAR(36), nullable=True, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=True, index=True)
 
@@ -32,7 +33,7 @@ class SpecificationFile(SupplyBase):
     original_name = Column(Text, nullable=False)
     storage_name = Column(Text, nullable=False)
     file_path = Column(Text, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 
@@ -53,7 +54,7 @@ class SpecificationItem(SupplyBase):
     warehouse_category_name = Column(Text, nullable=True)
     warehouse_category_id = Column(CHAR(36), nullable=True, index=True)
     comment = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 

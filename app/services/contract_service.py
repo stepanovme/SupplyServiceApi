@@ -204,7 +204,7 @@ class ContractService:
 
     # --- ContractLog ---
 
-    def get_logs(self, log_object_id: int | None = None, log_object_type: str | None = None, created_by: str | None = None):
+    def get_logs(self, log_object_id: str | None = None, log_object_type: str | None = None, created_by: str | None = None):
         rows = self.repo.get_logs(log_object_id, log_object_type, created_by)
         user_ids = {row.created_by for row in rows}
         users_by_id = self._get_users_map(list(user_ids))
@@ -867,6 +867,32 @@ class ContractService:
     def get_files(self, contract_id: int | None = None, folder_id: str | None = None):
         rows = self.repo.get_files(contract_id, folder_id)
         return [self._serialize_file(r) for r in rows]
+
+    def get_my_files(self, user_id: str) -> list[dict]:
+        contract_ids = self.repo.get_contract_ids_by_user(user_id)
+        if not contract_ids:
+            return []
+        contracts = self.repo.get_contracts_by_ids(contract_ids)
+        files = self.repo.get_files_by_contract_ids(contract_ids)
+        files_by_contract: dict[int, list[dict]] = {}
+        for f in files:
+            files_by_contract.setdefault(f.contract_id, []).append(self._serialize_file(f))
+        result = []
+        for c in contracts:
+            doc_type_name = None
+            if c.document_type_id:
+                dt = self.repo.get_document_type_by_id(c.document_type_id)
+                if dt:
+                    doc_type_name = dt.name
+            full_name = " ".join(part for part in [doc_type_name, c.name, "№", c.num] if part).strip()
+            entry = {
+                "id": c.id,
+                "full_name": full_name,
+                "type": c.type,
+                "files": files_by_contract.get(c.id, []),
+            }
+            result.append(entry)
+        return result
 
     def get_files_history(self, contract_id: int):
         rows = self.repo.get_files_history(contract_id)

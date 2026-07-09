@@ -1,9 +1,10 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import base64
 import hashlib
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -25,7 +26,7 @@ class Smtp(SupplyBase):
     password_hash = Column(String(1000), nullable=False)
     port = Column(Integer, nullable=False)
     security = Column(String(10), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class SmtpCreate(BaseModel):

@@ -1,6 +1,7 @@
+from app.database import msk_now
 import uuid
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Boolean, CHAR, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
@@ -21,7 +22,7 @@ class WarehouseReceipt(SupplyBase):
     who_write_off = Column(CHAR(36), nullable=True, index=True)
     object_id = Column(CHAR(36), nullable=True, index=True)
     file_id = Column(CHAR(36), ForeignKey("files.id"), nullable=True, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     date_arrival = Column(Date, nullable=True)
     date_completed = Column(DateTime, nullable=True)
     warehouse_id = Column(CHAR(36), ForeignKey("warehouse.id"), nullable=False, index=True)
@@ -61,7 +62,7 @@ class WarehouseReceiptLog(SupplyBase):
     id = Column(Integer, primary_key=True, autoincrement=True)
     warehouse_id = Column(CHAR(36), ForeignKey("warehouse.id"), nullable=False, index=True)
     warehouse_receipt_id = Column(CHAR(36), ForeignKey("warehouse_receipt.id"), nullable=False, index=True)
-    created_at = Column("carated_at", DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column("carated_at", DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 
@@ -76,7 +77,7 @@ class WarehouseReceiptItemLog(SupplyBase):
         index=True,
     )
     warehouse_id = Column(CHAR(36), ForeignKey("warehouse.id"), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 
@@ -91,7 +92,7 @@ class WarehouseFile(SupplyBase):
         index=True,
     )
     file_id = Column(CHAR(36), ForeignKey("files.id"), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=True, default=msk_now)
 
 
 class WarehouseReceiptCreate(BaseModel):

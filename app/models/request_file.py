@@ -1,4 +1,5 @@
-from datetime import datetime
+from app.database import msk_now
+from datetime import datetime, timedelta
 
 from sqlalchemy import JSON, CHAR, BigInteger, Boolean, Column, DateTime, ForeignKey, Integer, String, Text
 
@@ -15,7 +16,7 @@ class FileType(SupplyBase):
     allowed_extensions = Column(JSON, nullable=True)
     max_size_mb = Column(Integer, nullable=True, default=10)
     is_active = Column(Boolean, nullable=True, default=True)
-    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=True, default=msk_now)
 
 
 class FileDB(SupplyBase):
@@ -33,7 +34,7 @@ class FileDB(SupplyBase):
     version = Column(Integer, nullable=True, default=1)
     parent_file_id = Column(CHAR(36), ForeignKey("files.id"), nullable=True, index=True)
     uploaded_by = Column(CHAR(36), nullable=False, index=True)
-    uploaded_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, nullable=True, default=msk_now)
     status = Column(String(20), nullable=True, default="active")
 
 
@@ -47,7 +48,7 @@ class RequestFile(SupplyBase):
     description = Column(Text, nullable=True)
     is_main = Column(Boolean, nullable=True, default=False)
     sort_order = Column(Integer, nullable=True, default=0)
-    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=True, default=msk_now)
     created_by = Column(CHAR(36), nullable=True, index=True)
 
 
@@ -57,7 +58,7 @@ class NomenclatureFile(SupplyBase):
     id = Column(CHAR(36), primary_key=True)
     nomenclature_id = Column(CHAR(36), ForeignKey("nomenclature.id"), nullable=False, index=True)
     file_id = Column(CHAR(36), ForeignKey("files.id"), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=True, default=msk_now)
 
 
 class FileAudit(SupplyBase):
@@ -67,4 +68,4 @@ class FileAudit(SupplyBase):
     file_id = Column(CHAR(36), ForeignKey("files.id"), nullable=False, index=True)
     action = Column(String(20), nullable=False)
     user_id = Column(CHAR(36), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=True, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=True, default=msk_now)

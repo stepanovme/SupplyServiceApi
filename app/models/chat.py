@@ -1,6 +1,7 @@
 from __future__ import annotations
+from app.database import msk_now
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import JSON, CHAR, Column, DateTime, Enum, ForeignKey, Integer, Text, Boolean
@@ -12,15 +13,17 @@ class Chat(SupplyBase):
     __tablename__ = "chat"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    type = Column(Enum("personal", "invoice", "request", "delivery", "specification", "deal"), nullable=False)
+    type = Column(Enum("personal", "invoice", "request", "delivery", "specification", "deal", "task", "ticket"), nullable=False)
     user_id = Column(CHAR(36), nullable=True, index=True)
     invoice_id = Column(Integer, nullable=True, index=True)
     request_id = Column(Integer, nullable=True, index=True)
     delivery_id = Column(CHAR(36), nullable=True, index=True)
     specification_id = Column(CHAR(36), nullable=True, index=True)
     deal_id = Column(CHAR(36), nullable=True, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    updated_at = Column(DateTime, nullable=True, onupdate=datetime.utcnow)
+    task_id = Column(CHAR(36), nullable=True, index=True)
+    ticket_id = Column(Integer, nullable=True, index=True)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
+    updated_at = Column(DateTime, nullable=True, onupdate=msk_now)
 
 
 class ChatMember(SupplyBase):
@@ -38,7 +41,7 @@ class Message(SupplyBase):
     chat_id = Column(Integer, ForeignKey("chat.id"), nullable=False, index=True)
     sender_id = Column(CHAR(36), nullable=False, index=True)
     message_text = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class Attachment(SupplyBase):
@@ -50,7 +53,7 @@ class Attachment(SupplyBase):
     storage_name = Column(Text, nullable=False)
     file_path = Column(Text, nullable=False)
     file_type = Column(CHAR(100), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class ChatReadStatus(SupplyBase):
@@ -60,7 +63,7 @@ class ChatReadStatus(SupplyBase):
     chat_id = Column(Integer, ForeignKey("chat.id"), nullable=False, index=True)
     user_id = Column(CHAR(36), nullable=False, index=True)
     last_read_message_id = Column(Integer, ForeignKey("messages.id"), nullable=False)
-    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=msk_now, onupdate=msk_now)
 
 
 class MessageMention(SupplyBase):
@@ -72,7 +75,7 @@ class MessageMention(SupplyBase):
     user_id = Column(CHAR(36), nullable=False, index=True)
     is_notified = Column(Boolean, nullable=False, default=False)
     is_viewed = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 # ─── Pydantic schemas ───────────────────────────────────────────────────────────
@@ -85,6 +88,8 @@ class ChatCreate(BaseModel):
     delivery_id: str | None = Field(default=None)
     specification_id: str | None = Field(default=None)
     deal_id: str | None = Field(default=None)
+    task_id: str | None = Field(default=None)
+    ticket_id: int | None = Field(default=None)
 
 
 class ChatUpdate(BaseModel):
@@ -95,6 +100,8 @@ class ChatUpdate(BaseModel):
     delivery_id: str | None = Field(default=None)
     specification_id: str | None = Field(default=None)
     deal_id: str | None = Field(default=None)
+    task_id: str | None = Field(default=None)
+    ticket_id: int | None = Field(default=None)
 
 
 class ChatResponse(BaseModel):
@@ -106,6 +113,8 @@ class ChatResponse(BaseModel):
     delivery_id: str | None = None
     specification_id: str | None = None
     deal_id: str | None = None
+    task_id: str | None = None
+    ticket_id: int | None = None
     created_at: datetime
     updated_at: datetime | None = None
     last_message: dict | None = None

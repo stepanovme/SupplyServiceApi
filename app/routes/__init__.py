@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from app.routes.catalog_routes import catalog_router
 from app.routes.contracts_routes import contracts_router
+from app.routes.letters_routes import letters_router
 from app.routes.chats_routes import chats_router
 from app.routes.deals_routes import deals_router
 from app.routes.deliveries_routes import deliveries_router
@@ -23,6 +24,13 @@ from app.routes.smtp_routes import smtp_router
 from app.routes.upd_documents_routes import upd_documents_router
 from app.routes.upd_item_mappings_routes import upd_item_mappings_router
 from app.routes.mentions_routes import mentions_router
+from app.routes.tasks_routes import tasks_router
+from app.routes.tickets_routes import tickets_router
+from app.routes.departments_routes import departments_router
+from app.routes.documents_links_routes import documents_links_router
+from app.routes.vk_routes import vk_router
+from app.routes.wiki_routes import wiki_router, wiki_media_router
+from app.routes.news_routes import news_router, news_media_router
 from app.routes.warehouses_routes import warehouses_router
 from app.routes.warehouse_receipts_routes import warehouse_receipts_router
 
@@ -52,4 +60,14 @@ main_router.include_router(warehouses_router)
 main_router.include_router(warehouse_receipts_router)
 main_router.include_router(catalog_router)
 main_router.include_router(contracts_router)
+main_router.include_router(letters_router)
+main_router.include_router(tasks_router)
+main_router.include_router(tickets_router)
+main_router.include_router(vk_router)
 main_router.include_router(mentions_router)
+main_router.include_router(departments_router)
+main_router.include_router(documents_links_router)
+main_router.include_router(wiki_router)
+main_router.include_router(wiki_media_router)
+main_router.include_router(news_router)
+main_router.include_router(news_media_router)

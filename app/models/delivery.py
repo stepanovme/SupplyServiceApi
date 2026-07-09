@@ -1,6 +1,7 @@
+from app.database import msk_now
 import uuid
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -28,7 +29,7 @@ class Delivery(SupplyBase):
     driver_id = Column(CHAR(36), nullable=False, index=True)
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=False, index=True)
     comment = Column(Text, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 
@@ -43,7 +44,7 @@ class DeliveryItem(SupplyBase):
     name = Column(String(300), nullable=True)
     unit_name = Column(String(10), nullable=True)
     quantity = Column(Float, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 

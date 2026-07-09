@@ -1,7 +1,8 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel
 from sqlalchemy import CHAR, Column, DateTime, Text
@@ -18,7 +19,7 @@ class InvoicePaymentFile(SupplyBase):
     storage_name = Column(Text, nullable=False)
     file_path = Column(Text, nullable=False)
     uploaded_by = Column(CHAR(36), nullable=False, index=True)
-    uploaded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class InvoicePaymentFileCreate(BaseModel):

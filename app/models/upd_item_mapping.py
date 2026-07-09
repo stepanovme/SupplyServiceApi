@@ -1,4 +1,5 @@
-from datetime import datetime
+from app.database import msk_now
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -21,7 +22,7 @@ class UpdItemMapping(SupplyBase):
     price = Column(Float, nullable=True)
     warehouse_id = Column(CHAR(36), nullable=True, index=True)
     attribute = Column(String(300), nullable=True, default="Закупка")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class UpdItemMappingCreate(BaseModel):

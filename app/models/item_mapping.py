@@ -1,4 +1,5 @@
-from datetime import datetime
+from app.database import msk_now
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -19,7 +20,7 @@ class ItemMapping(SupplyBase):
     group_number = Column(Integer, nullable=False)
     match_type = Column(String(20), nullable=False, default="direct")
     mapped_quantity = Column(Float, nullable=False, default=0)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class ItemMappingCreate(BaseModel):

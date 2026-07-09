@@ -91,8 +91,8 @@ class ContractLog(SupplyBase):
     __tablename__ = "contract_log"
 
     id = Column(CHAR(36), primary_key=True)
-    log_object_id = Column(Integer, nullable=False)
-    log_object_type = Column(Enum("contract", "worktype", "contract_type", "document_type"), nullable=False)
+    log_object_id = Column(String(100), nullable=False)
+    log_object_type = Column(Enum("contract", "worktype", "contract_type", "document_type", "letter", "task"), nullable=False)
     message = Column(Text, nullable=False)
     created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)

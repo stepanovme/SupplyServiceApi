@@ -28,6 +28,11 @@ class ContractRepository:
     def get_contracts(self) -> list[Contract]:
         return self.db.query(Contract).order_by(Contract.id.desc()).all()
 
+    def get_contracts_by_ids(self, contract_ids: list[int]) -> list[Contract]:
+        if not contract_ids:
+            return []
+        return self.db.query(Contract).filter(Contract.id.in_(contract_ids)).order_by(Contract.id.desc()).all()
+
     def get_contract_ids_by_user(self, user_id: str) -> list[int]:
         from sqlalchemy import union
         from app.models.contract import ContractUserRole
@@ -110,7 +115,7 @@ class ContractRepository:
 
     # --- ContractLog ---
 
-    def create_log(self, log_object_id: int, log_object_type: str, message: str, created_by: str) -> ContractLog:
+    def create_log(self, log_object_id: str, log_object_type: str, message: str, created_by: str) -> ContractLog:
         row = ContractLog(
             id=str(uuid.uuid4()),
             log_object_id=log_object_id,
@@ -126,7 +131,7 @@ class ContractRepository:
 
     def get_logs(
         self,
-        log_object_id: int | None = None,
+        log_object_id: str | None = None,
         log_object_type: str | None = None,
         created_by: str | None = None,
     ) -> list[ContractLog]:
@@ -288,6 +293,16 @@ class ContractRepository:
         return (
             self.db.query(ContractFile)
             .filter(ContractFile.contract_id == contract_id, ContractFile.type.in_(["original", "version"]))
+            .order_by(ContractFile.uploaded_at.desc())
+            .all()
+        )
+
+    def get_files_by_contract_ids(self, contract_ids: list[int]) -> list[ContractFile]:
+        if not contract_ids:
+            return []
+        return (
+            self.db.query(ContractFile)
+            .filter(ContractFile.contract_id.in_(contract_ids))
             .order_by(ContractFile.uploaded_at.desc())
             .all()
         )

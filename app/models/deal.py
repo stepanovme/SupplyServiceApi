@@ -1,6 +1,7 @@
+from app.database import msk_now
 import uuid
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
@@ -17,7 +18,7 @@ class Deal(SupplyBase):
     counterparties_to = Column(CHAR(36), nullable=True, index=True)
     counterparties_from = Column(CHAR(36), nullable=True, index=True)
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
     date = Column(Date, nullable=True)
     date_event = Column(Date, nullable=True)

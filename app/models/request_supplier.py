@@ -1,8 +1,9 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import uuid
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -27,7 +28,7 @@ class RequestSupplier(SupplyBase):
     delivery_to_type = Column(String(20), nullable=True)
     comment_request = Column(Text, nullable=True)
     comment_supplier = Column(Text, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     sent_at = Column(DateTime, nullable=True)
     created_by = Column(CHAR(36), nullable=False, index=True)
     sent_by = Column(CHAR(36), nullable=True, index=True)
@@ -63,7 +64,7 @@ class RequestSupplierFile(SupplyBase):
     storage_name = Column(Text, nullable=False)
     file_path = Column(Text, nullable=False)
     uploaded_by = Column(CHAR(36), nullable=False, index=True)
-    uploaded_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    uploaded_at = Column(DateTime, nullable=False, default=msk_now)
 
 
 class RequestSupplierRecipient(SupplyBase):
@@ -84,7 +85,7 @@ class RequestSupplierLink(SupplyBase):
     request_supplier_recipient_id = Column(CHAR(36), ForeignKey("request_supplier_recipient.id"), nullable=False, index=True)
     code = Column(String(10), nullable=False)
     status = Column(String(10), nullable=False, default="active")
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     updated_at = Column(DateTime, nullable=True)
 
 

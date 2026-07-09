@@ -1,7 +1,8 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, DateTime, Float, ForeignKey, Integer
@@ -19,7 +20,7 @@ class RequestWarehouseList(SupplyBase):
     warehouse_list_id = Column(CHAR(36), ForeignKey("warehouse_list.id"), nullable=False, index=True)
     request_qantity = Column(Float, nullable=True)
     warehouse_quantity = Column(Float, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 

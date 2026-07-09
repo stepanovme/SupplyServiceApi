@@ -1,7 +1,8 @@
 from __future__ import annotations
+from app.database import msk_now
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, DateTime, ForeignKey, Integer
@@ -17,7 +18,7 @@ class RequestSpecification(SupplyBase):
     request_item_id = Column(CHAR(36), ForeignKey("request_items.id"), nullable=False, index=True)
     specification_id = Column(CHAR(36), nullable=False, index=True)
     specification_item_id = Column(CHAR(36), ForeignKey("specification_item.id"), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 

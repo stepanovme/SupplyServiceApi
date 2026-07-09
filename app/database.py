@@ -1,10 +1,15 @@
 import os
+from datetime import datetime, timedelta
 from typing import Annotated
 
 from dotenv import load_dotenv
 from fastapi import Depends
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+
+def msk_now():
+    return datetime.utcnow() + timedelta(hours=3)
 
 load_dotenv()
 

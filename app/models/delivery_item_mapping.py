@@ -1,6 +1,7 @@
+from app.database import msk_now
 import uuid
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, Date, DateTime, Float, ForeignKey, Integer
@@ -19,7 +20,7 @@ class DeliveryItemMapping(SupplyBase):
     delivery_quantity = Column(Float, nullable=True)
     nomenclature_quantity = Column(Float, nullable=True)
     group_number = Column(Integer, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 

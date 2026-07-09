@@ -1,5 +1,6 @@
+from app.database import msk_now
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
@@ -18,7 +19,7 @@ class UpdDocument(SupplyBase):
     num = Column(String(100), nullable=True)
     date = Column(Date, nullable=True)
     status = Column(CHAR(36), ForeignKey("status.id"), nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
 

@@ -166,5 +166,42 @@ class WSManager:
     def send_badge_counts(self, user_id: str, counts: dict) -> None:
         self.send_to_user(user_id, {"type": "badge_counts", **counts})
 
+    # --- Tasks ---
+
+    def send_task_created(self, user_ids: list[str], task: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "task_created", "task": task})
+
+    def send_task_updated(self, user_ids: list[str], task: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "task_updated", "task": task})
+
+    def send_task_deleted(self, user_ids: list[str], task_id: str) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "task_deleted", "task_id": task_id})
+
+    def send_task_log(self, user_ids: list[str], log: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "task_log", "log": log})
+
+    def send_incomplete_count(self, user_id: str, count: int) -> None:
+        self.send_to_user(user_id, {"type": "incomplete_count", "count": count})
+
+    # --- Boards & Columns ---
+
+    def send_column_created(self, user_ids: list[str], board_id: str, column: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "column_created", "board_id": board_id, "column": column})
+
+    def send_column_updated(self, user_ids: list[str], board_id: str, column: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "column_updated", "board_id": board_id, "column": column})
+
+    def send_column_deleted(self, user_ids: list[str], board_id: str, column_id: str) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "column_deleted", "board_id": board_id, "column_id": column_id})
+
+    def send_board_created(self, user_ids: list[str], board: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "board_created", "board": board})
+
+    def send_board_updated(self, user_ids: list[str], board: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "board_updated", "board": board})
+
+    def send_board_deleted(self, user_ids: list[str], board_id: str) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "board_deleted", "board_id": board_id})
+
 
 ws_manager = WSManager()

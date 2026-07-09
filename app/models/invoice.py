@@ -1,5 +1,6 @@
+from app.database import msk_now
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -30,7 +31,7 @@ class Invoice(SupplyBase):
     status = Column(CHAR(36), ForeignKey("status.id"), nullable=False)
     from_by = Column(CHAR(36), nullable=True, index=True)
     object_type = Column(Enum("object", "object_levels_id", name="object_type_enum"), nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     updated_at = Column(DateTime, nullable=True)
     created_by = Column(CHAR(36), nullable=False)
     comment = Column(Text, nullable=True)
@@ -71,7 +72,7 @@ class InvoicePayment(SupplyBase):
     value = Column(Float, nullable=True)
     date_plan = Column(Date, nullable=True)
     created_by = Column(CHAR(36), nullable=False, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     updated_at = Column(DateTime, nullable=True)
     paid = Column(Float, nullable=True)
     paid_type = Column(String(30), nullable=True)

@@ -289,6 +289,7 @@ class ChatService:
                 "delivery_id": chat.delivery_id,
                 "specification_id": chat.specification_id,
                 "deal_id": chat.deal_id,
+                "task_id": chat.task_id,
                 "created_at": chat.created_at,
                 "updated_at": chat.updated_at,
                 "title": title,
@@ -377,6 +378,10 @@ class ChatService:
         elif chat.type == "delivery":
             title = "Чат по доставке"
 
+        elif chat.type == "task" and chat.task_id:
+            name = self.repo.get_task_name(chat.task_id)
+            title = f"Чат по задаче {name}" if name else "Чат по задаче"
+
         return title, project_name, project_type, project_id
 
     def _build_project_name_from_level(self, object_levels_id: str) -> str | None:
@@ -408,6 +413,7 @@ class ChatService:
             "delivery_id": chat.delivery_id,
             "specification_id": chat.specification_id,
             "deal_id": chat.deal_id,
+            "task_id": chat.task_id,
             "created_at": chat.created_at,
             "updated_at": chat.updated_at,
             "last_message": last_message,

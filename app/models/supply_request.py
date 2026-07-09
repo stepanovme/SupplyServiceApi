@@ -1,5 +1,6 @@
+from app.database import msk_now
 from datetime import date as dt_date
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -17,7 +18,7 @@ class SupplyRequest(SupplyBase):
     comment = Column(Text, nullable=True)
     created_by = Column(CHAR(36), nullable=False, index=True)
     executor = Column(CHAR(36), nullable=True, index=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     started_at = Column(DateTime, nullable=True)
     approved_at = Column(DateTime, nullable=True)
     rejected_at = Column(DateTime, nullable=True)
@@ -81,7 +82,7 @@ class NomenclatureRef(SupplyBase):
     price_opt = Column(Float, nullable=True)
     price_opt2 = Column(Float, nullable=True)
     price_retail = Column(Float, nullable=True)
-    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=True, index=True)
 
 

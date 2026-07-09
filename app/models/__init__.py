@@ -47,6 +47,14 @@ from app.models.supply_request import (
 )
 from app.models.upd_document import UpdDocument, UpdDocumentItem
 from app.models.upd_item_mapping import UpdItemMapping
+from app.models.letter import (
+    Letter,
+    LetterFile,
+    LetterFolder,
+    LetterObject,
+    LetterStatus,
+    LetterUserRole,
+)
 from app.models.warehouse import Warehouse, WarehouseList
 from app.models.warehouse_receipt import (
     WarehouseFile,
@@ -55,3 +63,6 @@ from app.models.warehouse_receipt import (
     WarehouseReceiptItemLog,
     WarehouseReceiptLog,
 )
+from app.models.wiki import WikiPage
+from app.models.wiki_file import WikiFile
+from app.models.news import NewsPost
