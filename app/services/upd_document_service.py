@@ -18,6 +18,7 @@ from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.request_file_repository import RequestFileRepository
 from app.repositories.upd_document_repository import UpdDocumentRepository
+from app.services.mistral_retry import mistral_retry, recognize_document_text
 
 DEFAULT_UPD_STATUS_ID = "f5533f42-3972-11f1-b5d7-bc241127d0bd"
 UPD_FILE_TYPE_ID = "4594a94b-140f-11f1-aa8c-bc241127d0bd"
@@ -328,22 +329,16 @@ class UpdDocumentService:
             timeout_ms=120000,
         )
         try:
-            uploaded_file = client.files.upload(
+            uploaded_file = mistral_retry(
+                client.files.upload,
                 file={
                     "file_name": os.path.basename(file_name),
                     "content": file_bytes,
                 },
                 purpose="ocr",
             )
-            signed_url = client.files.get_signed_url(file_id=uploaded_file.id)
-            ocr_response = client.ocr.process(
-                model="mistral-ocr-latest",
-                document={
-                    "type": "document_url",
-                    "document_url": signed_url.url,
-                },
-            )
-            document_text = "\n\n".join(page.markdown for page in ocr_response.pages)
+            signed_url = mistral_retry(client.files.get_signed_url, file_id=uploaded_file.id)
+            document_text = recognize_document_text(client, signed_url.url)
         except httpx.RemoteProtocolError as exc:
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
@@ -424,8 +419,9 @@ class UpdDocumentService:
         last_exc = None
         for attempt in range(attempts):
             try:
-                return client.chat.complete(
-                    model="mistral-large-latest",
+                return mistral_retry(
+                    client.chat.complete,
+                    model="ministral-8b-2512",
                     messages=[{"role": "user", "content": prompt}],
                 )
             except Exception as exc:

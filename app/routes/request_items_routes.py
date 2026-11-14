@@ -21,7 +21,7 @@ def create_request_item(
     _session=Depends(get_session),
 ):
     service = RequestItemService(RequestRepository(db))
-    return service.create(request_id, payload)
+    return service.create(request_id, payload, user_id=_session.user_id)
 
 
 @request_items_router.patch(
@@ -37,7 +37,7 @@ def update_request_item(
     _session=Depends(get_session),
 ):
     service = RequestItemService(RequestRepository(db))
-    return service.update(request_id, item_id, payload)
+    return service.update(request_id, item_id, payload, user_id=_session.user_id)
 
 
 @request_items_router.delete(
@@ -52,5 +52,5 @@ def delete_request_item(
     _session=Depends(get_session),
 ):
     service = RequestItemService(RequestRepository(db))
-    service.delete(request_id, item_id)
+    service.delete(request_id, item_id, user_id=_session.user_id)
     return None

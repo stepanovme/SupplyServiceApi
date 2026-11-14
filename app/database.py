@@ -13,29 +13,83 @@ def msk_now():
 
 load_dotenv()
 
-AUTH_DATABASE_URL = (
-    f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@"
-    f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-)
+# Each named tenant has its own connection pools, shared by its configured hosts.
+import re
+from contextvars import ContextVar
+from urllib.parse import urlsplit
+from sqlalchemy.engine import URL
+from app.tenant_config import load_tenants
 
-SUPPLY_DB_NAME = os.getenv("SUPPLY_DB_NAME", "supply_service")
-SUPPLY_DATABASE_URL = (
-    f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@"
-    f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{SUPPLY_DB_NAME}"
-)
-REFERENCE_DB_NAME = os.getenv("REFERENCE_DB_NAME", "reference_service")
-REFERENCE_DATABASE_URL = (
-    f"mysql+pymysql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}@"
-    f"{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{REFERENCE_DB_NAME}"
-)
+current_tenant = ContextVar("current_tenant", default=os.getenv("TENANT_CLI_SITE"))
+_tenant_config, _tenant_hosts = load_tenants()
 
-auth_engine = create_engine(AUTH_DATABASE_URL)
-supply_engine = create_engine(SUPPLY_DATABASE_URL)
-reference_engine = create_engine(REFERENCE_DATABASE_URL)
+def _make_engines(config):
+    engines = {}
+    for kind, key in (("auth", "DB_NAME"), ("supply", "SUPPLY_DB_NAME"), ("reference", "REFERENCE_DB_NAME")):
+        name = config.get(key) or os.getenv(key)
+        if not name:
+            raise ValueError(f"{key} must be configured")
+        url = URL.create("mysql+pymysql", username=config.get("DB_USER", os.getenv("DB_USER")),
+                         password=config.get("DB_PASSWORD", os.getenv("DB_PASSWORD")),
+                         host=config.get("DB_HOST", os.getenv("DB_HOST")),
+                         port=int(config.get("DB_PORT") or os.getenv("DB_PORT") or 3306), database=name)
+        engines[kind] = create_engine(url, pool_recycle=3600, pool_pre_ping=True)
+    warehouse = config.get("WAREHOUSE_DB_NAME") if _tenant_config else os.getenv("WAREHOUSE_DB_NAME")
+    if warehouse and not re.fullmatch(r"[A-Za-z0-9_$]+", warehouse):
+        raise ValueError("Invalid WAREHOUSE_DB_NAME")
+    engines["warehouse"] = warehouse
+    return engines
 
-AuthSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=auth_engine)
-SupplySessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=supply_engine)
-ReferenceSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=reference_engine)
+
+_engines = {name: _make_engines(config) for name, config in _tenant_config.items()}
+if not _engines:
+    _engines["default"] = _make_engines({})
+_cli_site = os.getenv("TENANT_CLI_SITE")
+if _cli_site and _cli_site not in _engines:
+    raise ValueError("TENANT_CLI_SITE is not configured in TENANTS")
+_default = _engines[_cli_site] if _cli_site else next(iter(_engines.values()))
+auth_engine, supply_engine, reference_engine = (_default[k] for k in ("auth", "supply", "reference"))
+
+
+def resolve_tenant(scope):
+    if not _tenant_config:
+        return "default"
+    headers = dict(scope.get("headers", []))
+    origin = headers.get(b"origin", b"").decode("latin1")
+    if origin:
+        parsed = urlsplit(origin)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            return None
+        host = parsed.hostname.lower()
+    else:
+        host = headers.get(b"host", b"").decode("latin1").split(":", 1)[0].lower()
+    return _tenant_hosts.get(host)
+
+
+def tenant_engine(kind):
+    tenant = current_tenant.get()
+    if tenant is None and _tenant_config:
+        raise RuntimeError("Tenant context is required")
+    return _engines[tenant or "default"][kind]
+
+
+def tenant_cookie_name():
+    tenant = current_tenant.get()
+    if tenant is None and _tenant_config:
+        raise RuntimeError("Tenant context is required")
+    return _tenant_config.get(tenant, {}).get("COOKIE_NAME", "session")
+
+
+def AuthSessionLocal(**kwargs):
+    return Session(bind=tenant_engine("auth"), autoflush=False, **kwargs)
+
+
+def SupplySessionLocal(**kwargs):
+    return Session(bind=tenant_engine("supply"), autoflush=False, **kwargs)
+
+
+def ReferenceSessionLocal(**kwargs):
+    return Session(bind=tenant_engine("reference"), autoflush=False, **kwargs)
 
 
 class AuthBase(DeclarativeBase):

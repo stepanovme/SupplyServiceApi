@@ -15,6 +15,8 @@ from app.models.delivery_item_mapping import (
 )
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.delivery_item_mapping_repository import DeliveryItemMappingRepository
+from app.repositories.request_repository import RequestRepository
+from app.services.mistral_retry import mistral_retry
 
 
 class DeliveryItemMappingService:
@@ -22,9 +24,11 @@ class DeliveryItemMappingService:
         self,
         repo: DeliveryItemMappingRepository,
         auth_user_repo: AuthUserRepository,
+        request_repo: RequestRepository | None = None,
     ) -> None:
         self.repo = repo
         self.auth_user_repo = auth_user_repo
+        self.request_repo = request_repo
 
     def list(
         self,
@@ -53,6 +57,7 @@ class DeliveryItemMappingService:
         )
         data["created_by"] = user_id
         created = self.repo.create(data)
+        self._check_delivery_status(created.delivery_id)
         return self._serialize([created])[0]
 
     def update(self, mapping_id: str, payload: DeliveryItemMappingUpdate):
@@ -67,6 +72,7 @@ class DeliveryItemMappingService:
         for key, value in data.items():
             setattr(row, key, value)
         updated = self.repo.save(row)
+        self._check_delivery_status(updated.delivery_id)
         return self._serialize([updated])[0]
 
     def delete(self, mapping_id: str):
@@ -156,10 +162,21 @@ class DeliveryItemMappingService:
             "items": self._serialize(created),
         }
 
+    def _check_delivery_status(self, delivery_id: str):
+        if not self.request_repo:
+            return
+        row = self.repo.get_by_id(delivery_id) if hasattr(self.repo, 'get_by_id') else None
+        from app.models.delivery import Delivery
+        delivery = self.repo.db.query(Delivery).filter(Delivery.id == delivery_id).first()
+        if delivery and delivery.request_id:
+            self.request_repo.check_delivery_and_update_status(delivery.request_id)
+
     def _serialize(self, rows):
         if not rows:
             return []
         nomenclature = self.repo.get_nomenclature([row.nomenclature_id for row in rows if row.nomenclature_id])
+        unit_ids = [n.unit_id for n in nomenclature.values() if n.unit_id]
+        unit_names = self.repo.get_unit_names(unit_ids) if unit_ids else {}
         delivery_items = {
             row.delivery_item_id: self.repo.get_delivery_item_by_id(row.delivery_item_id)
             for row in rows
@@ -174,10 +191,12 @@ class DeliveryItemMappingService:
                 "delivery_item_id": row.delivery_item_id,
                 "nomenclature_id": row.nomenclature_id,
                 "nomenclature_name": nomenclature.get(row.nomenclature_id).name if nomenclature.get(row.nomenclature_id) else None,
+                "unit_name": unit_names.get(nomenclature[row.nomenclature_id].unit_id) if row.nomenclature_id and nomenclature.get(row.nomenclature_id) and nomenclature.get(row.nomenclature_id).unit_id else None,
                 "delivery_at": row.delivery_at,
                 "delivery_quantity": row.delivery_quantity,
                 "nomenclature_quantity": row.nomenclature_quantity,
                 "group_number": row.group_number,
+                "warehouse_receipt_id": row.warehouse_receipt_id,
                 "created_at": row.created_at,
                 "created_by": row.created_by,
                 "created_by_user": self._map_user(users_by_id.get(row.created_by)),
@@ -251,8 +270,9 @@ class DeliveryItemMappingService:
         )
 
         client = Mistral(api_key=mistral_api_key)
-        response = client.chat.complete(
-            model="mistral-large-latest",
+        response = mistral_retry(
+            client.chat.complete,
+            model="ministral-8b-2512",
             messages=[{"role": "user", "content": prompt}],
         )
         content = response.choices[0].message.content

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import subprocess
 import uuid
 from pathlib import Path
 
@@ -94,6 +95,13 @@ class ChatService:
         self.repo.remove_member(member)
         return None
 
+    def remove_member_by_user_id(self, chat_id: int, user_id: str):
+        member = self.repo.get_member(chat_id, user_id)
+        if not member:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Member not found")
+        self.repo.remove_member(member)
+        return None
+
     # ─── Messages ───────────────────────────────────────────────────────────────
 
     def get_messages(self, chat_id: int, user_id: str | None = None):
@@ -109,6 +117,8 @@ class ChatService:
         chat = self.repo.get_chat_by_id(chat_id)
         if not chat:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat not found")
+        if not self.repo.get_member(chat_id, sender_id):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not a chat member")
         data = {"sender_id": sender_id, "message_text": payload.message_text}
         message = self.repo.create_message(chat_id, data)
 
@@ -123,7 +133,25 @@ class ChatService:
         serialized = self._serialize_message(message)
 
         member_ids = self._get_member_ids(chat_id)
-        ws_manager.send_new_message(member_ids, chat_id, serialized, sender_id)
+        ws_manager.send_new_message(member_ids, chat_id, serialized, sender_id, {"id": chat.id, "type": chat.type, "invoice_id": chat.invoice_id, "request_id": chat.request_id, "task_id": chat.task_id})
+
+        from app.services.notification_feed_service import push_notification
+
+        actor_fio = self._get_user_fio(sender_id) if hasattr(self, '_get_user_fio') else sender_id
+        try:
+            ui = self._get_user(sender_id)
+            if ui:
+                actor_fio = f"{ui.get('surname', '')} {ui.get('name', '')} {ui.get('patronymic', '')}".strip()
+        except Exception:
+            pass
+        for uid in member_ids:
+            if uid == sender_id:
+                continue
+            push_notification(self.repo.db, uid, "chat_message",
+                              title="Новое сообщение",
+                              body=f"{actor_fio}: {(payload.message_text or 'Вложение')[:200]}",
+                              object_type="chat", object_id=str(chat_id),
+                              related_user_id=sender_id)
 
         for mention_user_id in mention_ids:
             if mention_user_id != sender_id:
@@ -131,6 +159,20 @@ class ChatService:
                 unviewed = self.repo.get_unviewed_mentions_count(chat_id, mention_user_id)
                 ws_manager.send_mention(member_ids, chat_id, message.id, mention_user_id, unviewed)
                 self._push_badge_for_user(mention_user_id)
+
+                push_notification(self.repo.db, mention_user_id, "chat_mention",
+                                  title="Новое упоминание в чате",
+                                  body=f"{actor_fio} упомянул вас: {(payload.message_text or 'Вложение')[:200]}",
+                                  object_type="chat", object_id=str(chat_id),
+                                  related_user_id=sender_id)
+
+        for mid in member_ids:
+            try:
+                unread = self.repo.get_unread_count(mid)
+                print(f"[unread] user={mid} count={unread}")
+                ws_manager.send_unread_count(mid, unread)
+            except Exception as e:
+                print(f"[unread] error for {mid}: {e}")
 
         return serialized
 
@@ -173,6 +215,7 @@ class ChatService:
             message_id,
             {"file_name": file_name, "storage_name": storage_name, "file_path": file_path, "file_type": file_type},
         )
+        ws_manager.send_message_updated(self._get_member_ids(message.chat_id), message.chat_id, self._serialize_message(message))
         return self._serialize_attachment(attachment)
 
     def get_attachments(self, message_id: int):
@@ -194,6 +237,58 @@ class ChatService:
         if not attachment.file_path or not os.path.exists(attachment.file_path):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
         return attachment.file_path, attachment.file_name
+
+    PREVIEW_EXTENSIONS = {".docx", ".doc", ".xls", ".xlsx", ".pptx"}
+    IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tiff", ".tif", ".webp", ".heic"}
+
+    def preview_attachment(self, attachment_id: int) -> str:
+        attachment = self.repo.get_attachment_by_id(attachment_id)
+        if not attachment:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+        if not attachment.file_path or not os.path.exists(attachment.file_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
+
+        file_path = attachment.file_path
+        ext = Path(file_path).suffix.lower()
+
+        if ext == ".pdf":
+            return file_path
+
+        if ext in self.IMAGE_EXTENSIONS:
+            from app.services.pdf_converter import convert_image_to_pdf
+            cached = Path(file_path).parent / f"{Path(file_path).name}.preview.pdf"
+            if cached.exists():
+                return str(cached)
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            pdf_bytes = convert_image_to_pdf(file_bytes, attachment.file_name)
+            with open(cached, "wb") as f:
+                f.write(pdf_bytes)
+            return str(cached)
+
+        if ext not in self.PREVIEW_EXTENSIONS:
+            raise HTTPException(status_code=400, detail="Preview not supported for this file type")
+
+        cached = Path(file_path).parent / f"{Path(file_path).name}.preview.pdf"
+        if cached.exists():
+            return str(cached)
+
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", str(cached.parent), file_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=500, detail=f"Conversion failed: {result.stderr.strip()}")
+
+        output_name = f"{Path(file_path).stem}.pdf"
+        output_path = cached.parent / output_name
+        if output_path.exists():
+            os.rename(str(output_path), str(cached))
+
+        if not cached.exists():
+            raise HTTPException(status_code=500, detail="Conversion produced no output")
+
+        return str(cached)
 
     # ─── Read Status ────────────────────────────────────────────────────────────
 
@@ -222,6 +317,16 @@ class ChatService:
         member_ids = self._get_member_ids(chat_id)
         ws_manager.send_read_status(member_ids, chat_id, user_id, last_read_message_id)
         return {"status": "ok"}
+
+    def mark_all_chats_read(self, user_id: str):
+        chat_ids = self.repo.get_user_chat_ids(user_id)
+        updated = 0
+        for chat_id in chat_ids:
+            last_id = self.repo.get_last_message_id(chat_id)
+            if last_id:
+                self.repo.upsert_read_status(chat_id, user_id, last_id)
+                updated += 1
+        return {"updated_chats": updated}
 
     def _mark_read(self, chat_id: int, user_id: str, last_message_id: int) -> None:
         if last_message_id:
@@ -268,11 +373,17 @@ class ChatService:
 
     # ─── My chats ──────────────────────────────────────────────────────────
 
+    def get_unread_count(self, user_id: str) -> dict:
+        return {"unread_count": self.repo.get_unread_count(user_id)}
+
     def get_my_chats(self, user_id: str):
         chats = self.repo.get_user_chats(user_id)
         result = []
         for chat in chats:
-            last_message = self.repo.get_last_message_id(chat.id)
+            last_info = self.repo.get_last_message_info(chat.id)
+            if not last_info:
+                continue
+            last_message, last_created_at = last_info
             read_status = self.repo.get_read_status(chat.id, user_id)
             last_read_id = read_status.last_read_message_id if read_status else 0
             unread = (last_message or 0) - last_read_id if last_message and last_read_id else 0
@@ -300,7 +411,9 @@ class ChatService:
                 "unread_count": unread,
                 "last_message_id": last_message,
                 "last_read_message_id": last_read_id if last_read_id else None,
+                "last_created_at": last_created_at,
             })
+        result.sort(key=lambda x: x["last_created_at"], reverse=True)
         return result
 
     def _build_chat_meta(self, chat: Chat, viewer_user_id: str | None = None):
@@ -444,8 +557,10 @@ class ChatService:
             "mentions": mentions,
         }
 
-    @staticmethod
-    def _serialize_attachment(att: Attachment) -> dict:
+    def _serialize_attachment(self, att: Attachment) -> dict:
+        message = self.repo.get_message_by_id(att.message_id)
+        prefix = os.getenv("CHAT_PUBLIC_API_PREFIX", "/apisup/supply").rstrip("/")
+        path = f"{prefix}/chats/{message.chat_id}/messages/{att.message_id}/attachments/{att.id}/content" if message else None
         return {
             "id": att.id,
             "message_id": att.message_id,
@@ -453,6 +568,7 @@ class ChatService:
             "storage_name": att.storage_name,
             "file_path": att.file_path,
             "file_type": att.file_type,
+            "url": path,
             "created_at": att.created_at,
         }
 

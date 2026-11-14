@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
@@ -36,6 +36,15 @@ def build_service(
 
 
 # ─── Chats ──────────────────────────────────────────────────────────────────────
+
+@chats_router.get("/unread-count", status_code=status.HTTP_200_OK)
+def get_unread_count(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    session: SessionDB = Depends(get_session),
+):
+    return build_service(supply_db, auth_db).get_unread_count(str(session.user_id))
+
 
 @chats_router.get("/my", status_code=status.HTTP_200_OK)
 def get_my_chats(
@@ -85,6 +94,15 @@ def create_chat(
     session: SessionDB = Depends(get_session),
 ):
     return build_service(supply_db, auth_db).create(payload, str(session.user_id))
+
+
+@chats_router.patch("/read-all", status_code=status.HTTP_200_OK)
+def mark_all_chats_read(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    session: SessionDB = Depends(get_session),
+):
+    return build_service(supply_db, auth_db).mark_all_chats_read(str(session.user_id))
 
 
 @chats_router.patch("/{chat_id}", status_code=status.HTTP_200_OK)
@@ -144,6 +162,18 @@ def remove_member(
     return None
 
 
+@chats_router.delete("/{chat_id}/members/by-user/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_member_by_user_id(
+    chat_id: int,
+    user_id: str,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    _session=Depends(get_session),
+):
+    build_service(supply_db, auth_db).remove_member_by_user_id(chat_id, user_id)
+    return None
+
+
 # ─── Messages ───────────────────────────────────────────────────────────────────
 
 @chats_router.get("/{chat_id}/messages", status_code=status.HTTP_200_OK)
@@ -193,6 +223,20 @@ def delete_message(
 
 # ─── Attachments ────────────────────────────────────────────────────────────────
 
+
+def _check_attachment_access(service, chat_id, message_id, user_id, attachment_id=None):
+    if not service.repo.get_member(chat_id, str(user_id)):
+        raise HTTPException(status_code=403, detail="Not a chat member")
+    message = service.repo.get_message_by_id(message_id)
+    if not message or message.chat_id != chat_id:
+        raise HTTPException(status_code=404, detail="Message not found")
+    if attachment_id is not None:
+        attachment = service.repo.get_attachment_by_id(attachment_id)
+        if not attachment or attachment.message_id != message_id:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+    return message
+
+
 @chats_router.post("/{chat_id}/messages/{message_id}/attachments", status_code=status.HTTP_201_CREATED)
 async def upload_attachment(
     chat_id: int,
@@ -203,6 +247,9 @@ async def upload_attachment(
     file: UploadFile = File(...),
 ):
     service = build_service(supply_db, auth_db)
+    message = _check_attachment_access(service, chat_id, message_id, _session.user_id)
+    if str(message.sender_id) != str(_session.user_id):
+        raise HTTPException(status_code=403, detail="Only the sender can attach files")
     file_bytes = await file.read()
     return await run_in_threadpool(
         service.upload_attachment,
@@ -221,7 +268,30 @@ def get_attachments(
     auth_db: DbAuthSession,
     _session=Depends(get_session),
 ):
-    return build_service(supply_db, auth_db).get_attachments(message_id)
+    service = build_service(supply_db, auth_db)
+    _check_attachment_access(service, chat_id, message_id, _session.user_id)
+    return service.get_attachments(message_id)
+
+
+@chats_router.get("/{chat_id}/messages/{message_id}/attachments/{attachment_id}/content")
+def attachment_content(chat_id: int, message_id: int, attachment_id: int,
+                       supply_db: DbSupplySession, auth_db: DbAuthSession,
+                       session: SessionDB = Depends(get_session)):
+    service = build_service(supply_db, auth_db)
+    message = service.repo.get_message_by_id(message_id)
+    attachment = service.repo.get_attachment_by_id(attachment_id)
+    if not service.repo.get_member(chat_id, str(session.user_id)):
+        raise HTTPException(status_code=403, detail="Not a chat member")
+    if not message or message.chat_id != chat_id or not attachment or attachment.message_id != message_id:
+        raise HTTPException(status_code=404, detail="Attachment not found")
+    file_path, filename = service.download_attachment(attachment_id)
+    # Only known raster formats are displayed inline; active content is downloaded.
+    from pathlib import Path
+    allowed = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp"}
+    mime = allowed.get(Path(filename).suffix.lower())
+    return FileResponse(file_path, media_type=mime or "application/octet-stream", filename=filename,
+                        content_disposition_type="inline" if mime else "attachment",
+                        headers={"X-Content-Type-Options": "nosniff"})
 
 
 @chats_router.get("/{chat_id}/messages/{message_id}/attachments/{attachment_id}/download", status_code=status.HTTP_200_OK)
@@ -233,8 +303,25 @@ def download_attachment(
     auth_db: DbAuthSession,
     _session=Depends(get_session),
 ):
-    file_path, filename = build_service(supply_db, auth_db).download_attachment(attachment_id)
+    service = build_service(supply_db, auth_db)
+    _check_attachment_access(service, chat_id, message_id, _session.user_id, attachment_id)
+    file_path, filename = service.download_attachment(attachment_id)
     return FileResponse(file_path, filename=filename)
+
+
+@chats_router.get("/{chat_id}/messages/{message_id}/attachments/{attachment_id}/preview", status_code=status.HTTP_200_OK)
+def preview_attachment(
+    chat_id: int,
+    message_id: int,
+    attachment_id: int,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    _session=Depends(get_session),
+):
+    service = build_service(supply_db, auth_db)
+    _check_attachment_access(service, chat_id, message_id, _session.user_id, attachment_id)
+    file_path = service.preview_attachment(attachment_id)
+    return FileResponse(file_path, media_type="application/pdf")
 
 
 @chats_router.delete("/{chat_id}/messages/{message_id}/attachments/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -246,7 +333,11 @@ def delete_attachment(
     auth_db: DbAuthSession,
     _session=Depends(get_session),
 ):
-    build_service(supply_db, auth_db).delete_attachment(attachment_id)
+    service = build_service(supply_db, auth_db)
+    message = _check_attachment_access(service, chat_id, message_id, _session.user_id, attachment_id)
+    if str(message.sender_id) != str(_session.user_id):
+        raise HTTPException(status_code=403, detail="Only the sender can delete attachments")
+    service.delete_attachment(attachment_id)
     return None
 
 

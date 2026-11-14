@@ -20,6 +20,8 @@ class CounterpartyRepository:
             select_columns.append("short_name")
         if "type" in counterparty_columns:
             select_columns.append("type")
+        if "logo_url" in counterparty_columns:
+            select_columns.append("logo_url")
 
         counterparty = self.db.execute(
             text(
@@ -61,6 +63,7 @@ class CounterpartyRepository:
             "inn": inn,
             "kpp": kpp,
             "checking_account": bank.get("checking_account") if bank else None,
+            "logo_url": counterparty.get("logo_url"),
         }
 
     def get_counterparty_names(self, counterparty_ids: list[str]) -> dict[str, str]:

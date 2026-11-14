@@ -2,6 +2,7 @@ import uuid
 from types import SimpleNamespace
 
 from sqlalchemy import bindparam, text
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.models.supply_request import NomenclatureRef, UnitRef
@@ -27,11 +28,24 @@ class WarehouseRepository:
             .all()
         )
 
+    def get_list_by_nomenclature_ids(self, nomenclature_ids: list[str]) -> list[WarehouseList]:
+        if not nomenclature_ids:
+            return []
+        return (
+            self.db.query(WarehouseList)
+            .filter(WarehouseList.nomenclature_id.in_(nomenclature_ids))
+            .order_by(WarehouseList.date.asc(), WarehouseList.id.asc())
+            .all()
+        )
+
     def get_all_list_rows(self, search: str | None = None) -> list[WarehouseList]:
         query = self.db.query(WarehouseList)
         if search:
             query = query.join(NomenclatureRef, NomenclatureRef.id == WarehouseList.nomenclature_id).filter(
-                NomenclatureRef.name.ilike(f"%{search}%")
+                or_(
+                    NomenclatureRef.name.ilike(f"%{search}%"),
+                    NomenclatureRef.article.ilike(f"%{search}%"),
+                )
             )
         return query.order_by(WarehouseList.date.asc(), WarehouseList.id.asc()).all()
 
@@ -126,6 +140,70 @@ class WarehouseRepository:
         self.db.commit()
         self.db.refresh(row)
         return row
+
+    def get_list_row_by_id_only(self, row_id: str) -> WarehouseList | None:
+        return self.db.query(WarehouseList).filter(WarehouseList.id == row_id).first()
+
+    def get_list_rows_by_warehouse_and_nomenclature(
+        self, warehouse_id: str, nomenclature_id: str
+    ) -> list[WarehouseList]:
+        return (
+            self.db.query(WarehouseList)
+            .filter(
+                WarehouseList.warehouse_id == warehouse_id,
+                WarehouseList.nomenclature_id == nomenclature_id,
+            )
+            .order_by(WarehouseList.date.asc(), WarehouseList.id.asc())
+            .all()
+        )
+
+    def find_list_row_by_details(
+        self,
+        warehouse_id: str,
+        nomenclature_id: str,
+        price: float | None,
+        vat_rate: int | None,
+        object_levels_id: str | None,
+        object_id: str | None,
+        delivery_id: str | None,
+        toll: bool,
+        toll_company_id: str | None,
+        attribute: str | None,
+    ) -> WarehouseList | None:
+        q = self.db.query(WarehouseList).filter(
+            WarehouseList.warehouse_id == warehouse_id,
+            WarehouseList.nomenclature_id == nomenclature_id,
+        )
+        if price is not None:
+            q = q.filter(WarehouseList.price == price)
+        else:
+            q = q.filter(WarehouseList.price.is_(None))
+        if vat_rate is not None:
+            q = q.filter(WarehouseList.vat_rate == vat_rate)
+        else:
+            q = q.filter(WarehouseList.vat_rate.is_(None))
+        if object_levels_id is not None:
+            q = q.filter(WarehouseList.object_levels_id == object_levels_id)
+        else:
+            q = q.filter(WarehouseList.object_levels_id.is_(None))
+        if object_id is not None:
+            q = q.filter(WarehouseList.object_id == object_id)
+        else:
+            q = q.filter(WarehouseList.object_id.is_(None))
+        if delivery_id is not None:
+            q = q.filter(WarehouseList.delivery_id == delivery_id)
+        else:
+            q = q.filter(WarehouseList.delivery_id.is_(None))
+        if toll_company_id is not None:
+            q = q.filter(WarehouseList.toll_company_id == toll_company_id)
+        else:
+            q = q.filter(WarehouseList.toll_company_id.is_(None))
+        if attribute is not None:
+            q = q.filter(WarehouseList.attribute == attribute)
+        else:
+            q = q.filter(WarehouseList.attribute.is_(None))
+        q = q.filter(WarehouseList.toll == (1 if toll else 0))
+        return q.first()
 
     def save(self, row: Warehouse) -> Warehouse:
         self.db.commit()

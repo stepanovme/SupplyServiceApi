@@ -40,6 +40,14 @@ class ReferenceObjectRepository:
             return []
         return self.db.query(RefObject).filter(RefObject.id.in_(unique_ids)).all()
 
+    def get_all_objects(self) -> list[RefObject]:
+        return self.db.query(RefObject).all()
+
+    def get_objects_except_ids(self, exclude_ids: list[str]) -> list[RefObject]:
+        if not exclude_ids:
+            return self.get_all_objects()
+        return self.db.query(RefObject).filter(~RefObject.id.in_(exclude_ids)).all()
+
     def get_contracts_by_ids(self, contract_ids: list[str]) -> list[ContractRef]:
         unique_ids = list({contract_id for contract_id in contract_ids if contract_id})
         if not unique_ids:
@@ -73,6 +81,19 @@ class ReferenceObjectRepository:
             result[str(row.id)] = name
         return result
 
+    def get_counterparty_logos(self, counterparty_ids: list[str]) -> dict[str, str | None]:
+        unique_ids = list({counterparty_id for counterparty_id in counterparty_ids if counterparty_id})
+        if not unique_ids:
+            return {}
+
+        rows = (
+            self.db.query(CounterpartyRef.id, CounterpartyRef.logo_url)
+            .filter(CounterpartyRef.id.in_(unique_ids))
+            .all()
+        )
+
+        return {str(row.id): row.logo_url for row in rows}
+
     def is_counterparty_internal(self, counterparty_id: str) -> bool:
         row = self.db.query(CounterpartyRef.is_internal).filter(CounterpartyRef.id == counterparty_id).first()
         return row is not None and row.is_internal == 1
@@ -98,6 +119,23 @@ class ReferenceObjectRepository:
 
     def get_bank_accounts(self, counterparty_id: str) -> list[BankAccount]:
         return self.db.query(BankAccount).filter(BankAccount.counterparty_id == counterparty_id).all()
+
+    def get_levels_by_ids(self, level_ids: list[str]) -> list[ObjectLevel]:
+        unique_ids = list({lid for lid in level_ids if lid})
+        if not unique_ids:
+            return []
+        return self.db.query(ObjectLevel).filter(ObjectLevel.id.in_(unique_ids)).all()
+
+    def get_level_ids_by_object_ids(self, object_ids: list[str]) -> set[str]:
+        unique_ids = list({oid for oid in object_ids if oid})
+        if not unique_ids:
+            return set()
+        rows = (
+            self.db.query(ObjectLevel.id)
+            .filter(ObjectLevel.object_id.in_(unique_ids))
+            .all()
+        )
+        return {row[0] for row in rows}
 
     def resolve_object_name(self, object_level_id: str) -> str | None:
         level = self.db.query(ObjectLevel).filter(ObjectLevel.id == object_level_id).first()

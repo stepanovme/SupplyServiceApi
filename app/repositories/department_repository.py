@@ -69,6 +69,12 @@ class DepartmentRepository:
         self.db.refresh(row)
         return row
 
+    def get_department_ids_for_user(self, user_id: str) -> list[int]:
+        rows = self.db.query(DepartmentUser.departament_id).filter(
+            DepartmentUser.user_id == user_id
+        ).all()
+        return [row[0] for row in rows]
+
     def delete_user(self, row: DepartmentUser) -> None:
         self.db.delete(row)
         self.db.commit()

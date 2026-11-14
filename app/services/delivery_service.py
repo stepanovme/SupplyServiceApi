@@ -6,6 +6,8 @@ from app.models.delivery import (
     DeliveryItemUpdate,
     DeliveryUpdate,
 )
+from app.models.invoice import Invoice
+from app.models.supply_request import SupplyRequest
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.counterparty_repository import CounterpartyRepository
 from app.repositories.delivery_repository import DeliveryRepository
@@ -108,6 +110,48 @@ class DeliveryService:
 
         carrier_ids = [row.carrier_id for row in rows if row.carrier_id]
         counterparty_names = self.reference_repo.get_counterparty_names(carrier_ids)
+        counterparty_logos = self.reference_repo.get_counterparty_logos(carrier_ids)
+
+        invoice_ids = [row.invoice_id for row in rows if row.invoice_id]
+        invoice_map = {}
+        if invoice_ids:
+            invoices = self.repo.db.query(Invoice).filter(Invoice.id.in_(invoice_ids)).all()
+            invoice_map = {inv.id: inv for inv in invoices}
+        provider_ids = list({inv.provider_id for inv in invoice_map.values() if inv.provider_id})
+        provider_names = self.reference_repo.get_counterparty_names(provider_ids) if provider_ids else {}
+        provider_logos = self.reference_repo.get_counterparty_logos(provider_ids) if provider_ids else {}
+
+        request_ids = [row.request_id for row in rows if row.request_id]
+        request_map = {}
+        if request_ids:
+            requests = self.repo.db.query(SupplyRequest).filter(SupplyRequest.id.in_(request_ids)).all()
+            request_map = {req.id: req for req in requests}
+
+        object_level_ids = set()
+        for inv in invoice_map.values():
+            if inv.object_levels_id:
+                object_level_ids.add(inv.object_levels_id)
+        for req in request_map.values():
+            if req.object_levels_id:
+                object_level_ids.add(req.object_levels_id)
+        level_to_object_name = {}
+        if object_level_ids:
+            ids_list = list(object_level_ids)
+            levels = self.reference_repo.get_levels_by_ids(ids_list)
+            level_map = {lvl.id: lvl for lvl in levels}
+            parent_object_ids = list({lvl.object_id for lvl in levels if lvl.object_id})
+            direct_objects = self.reference_repo.get_objects_by_ids(ids_list)
+            direct_obj_names = {o.id: (o.short_name or o.full_name or None) for o in direct_objects}
+            parent_obj_names = {}
+            if parent_object_ids:
+                parent_objects = self.reference_repo.get_objects_by_ids(parent_object_ids)
+                parent_obj_names = {o.id: (o.short_name or o.full_name or None) for o in parent_objects}
+            for lid in object_level_ids:
+                lvl = level_map.get(lid)
+                if lvl and lvl.object_id:
+                    level_to_object_name[lid] = parent_obj_names.get(lvl.object_id)
+                if not level_to_object_name.get(lid):
+                    level_to_object_name[lid] = direct_obj_names.get(lid)
 
         warehouse_ids = []
         object_ids = []
@@ -131,14 +175,59 @@ class DeliveryService:
         object_names = {row.id: (row.short_name or row.full_name) for row in object_rows}
         company_names = self.reference_repo.get_counterparty_names(company_ids)
 
+        delivery_ids = [row.id for row in rows]
+        all_items = {}
+        all_mappings = {}
+        if delivery_ids:
+            items = self.repo.get_items(delivery_ids[0]) if len(delivery_ids) == 1 else []
+            for did in delivery_ids:
+                di = self.repo.get_items(did)
+                all_items[did] = di
+            mappings = self.repo.get_mappings_by_delivery_ids(delivery_ids)
+            for m in mappings:
+                all_mappings.setdefault(m.delivery_id, []).append(m)
+
+        delivery_summaries = {}
+        for did in delivery_ids:
+            items_list = all_items.get(did, [])
+            mappings_list = all_mappings.get(did, [])
+            total_quantity = sum(item.quantity or 0 for item in items_list)
+            received_quantity = sum(m.delivery_quantity or 0 for m in mappings_list)
+            remaining_quantity = total_quantity - received_quantity
+            total_items = len(items_list)
+            completed_items = 0
+            for item in items_list:
+                item_mappings = [m for m in mappings_list if m.delivery_item_id == item.id]
+                item_received = sum(m.delivery_quantity or 0 for m in item_mappings)
+                if item.quantity and item_received >= item.quantity:
+                    completed_items += 1
+            remaining_items = total_items - completed_items
+            delivery_summaries[did] = {
+                "total_quantity": total_quantity,
+                "received_quantity": received_quantity,
+                "remaining_quantity": remaining_quantity,
+                "total_items": total_items,
+                "completed_items": completed_items,
+                "remaining_items": remaining_items,
+            }
+
         return [
             {
                 "id": row.id,
                 "num": row.num,
                 "request_id": row.request_id,
+                "request_name": request_map[row.request_id].name if row.request_id and row.request_id in request_map else None,
                 "invoice_id": row.invoice_id,
+                "invoice_name": f"{invoice_map[row.invoice_id].num} от {invoice_map[row.invoice_id].date.strftime('%d.%m.%Y')}" if row.invoice_id and row.invoice_id in invoice_map and invoice_map[row.invoice_id].num else None,
+                "invoice_date": invoice_map[row.invoice_id].date.isoformat() if row.invoice_id and row.invoice_id in invoice_map and invoice_map[row.invoice_id].date else None,
                 "carrier_id": row.carrier_id,
                 "carrier_name": counterparty_names.get(row.carrier_id),
+                "carrier_logo_url": counterparty_logos.get(row.carrier_id),
+                "invoice_provider_id": invoice_map.get(row.invoice_id, None) and invoice_map[row.invoice_id].provider_id,
+                "invoice_provider_name": provider_names.get(invoice_map.get(row.invoice_id, None) and invoice_map[row.invoice_id].provider_id),
+                "invoice_provider_logo_url": provider_logos.get(invoice_map.get(row.invoice_id, None) and invoice_map[row.invoice_id].provider_id),
+                "object_id": self._get_object_id_from_delivery(row, invoice_map, request_map),
+                "object_name": self._get_object_name_from_delivery(row, invoice_map, request_map, level_to_object_name),
                 "pick_up_date": row.pick_up_date,
                 "pick_up_date_planned": row.pick_up_date_planned,
                 "planned_delivery_from": row.planned_delivery_from,
@@ -161,18 +250,41 @@ class DeliveryService:
                 "created_at": row.created_at,
                 "created_by": row.created_by,
                 "created_by_user": self._map_user(users_by_id.get(row.created_by)),
-                "items": self._serialize_items(self.repo.get_items(row.id)),
+                "summary": delivery_summaries.get(row.id, {}),
+                "items": self._serialize_items(self.repo.get_items(row.id), all_mappings.get(row.id, [])),
             }
             for row in rows
         ]
 
-    def _serialize_items(self, rows):
+    def _get_object_id_from_delivery(self, row, invoice_map, request_map):
+        inv = invoice_map.get(row.invoice_id)
+        if inv and inv.object_levels_id:
+            return inv.object_levels_id
+        req = request_map.get(row.request_id)
+        if req and req.object_levels_id:
+            return req.object_levels_id
+        return None
+
+    def _get_object_name_from_delivery(self, row, invoice_map, request_map, level_to_object_name):
+        inv = invoice_map.get(row.invoice_id)
+        if inv and inv.object_levels_id:
+            return level_to_object_name.get(inv.object_levels_id)
+        req = request_map.get(row.request_id)
+        if req and req.object_levels_id:
+            return level_to_object_name.get(req.object_levels_id)
+        return None
+
+    def _serialize_items(self, rows, mappings=None):
         if not rows:
             return []
         nomenclature = self.repo.get_nomenclature([row.nomenclature_id for row in rows if row.nomenclature_id])
         user_ids = [row.created_by for row in rows if row.created_by]
         users = self.auth_user_repo.get_by_ids(list(set(user_ids)))
         users_by_id = {user.id: user for user in users}
+        mappings_by_item = {}
+        if mappings:
+            for m in mappings:
+                mappings_by_item.setdefault(m.delivery_item_id, []).append(m)
         return [
             {
                 "id": row.id,
@@ -184,6 +296,8 @@ class DeliveryService:
                 "name": row.name,
                 "unit_name": row.unit_name,
                 "quantity": row.quantity,
+                "received_quantity": sum(m.delivery_quantity or 0 for m in mappings_by_item.get(row.id, [])),
+                "remaining_quantity": (row.quantity or 0) - sum(m.delivery_quantity or 0 for m in mappings_by_item.get(row.id, [])),
                 "created_at": row.created_at,
                 "created_by": row.created_by,
                 "created_by_user": self._map_user(users_by_id.get(row.created_by)),

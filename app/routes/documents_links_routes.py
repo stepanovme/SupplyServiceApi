@@ -28,13 +28,28 @@ def get_all(
     )
 
 
+@documents_links_router.get("/types", status_code=status.HTTP_200_OK, summary="Типы документов, которые можно связывать")
+def get_types(supply_db: DbSupplySession, _session=Depends(get_session)):
+    return build_service(supply_db).get_types()
+
+
+@documents_links_router.get(
+    "/for/{document_type}/{document_id}", status_code=status.HTTP_200_OK,
+    summary="Всё, что связано с документом",
+    description="document_type: contract, act, letter, invoice, upd, registry_record. Для каждой связи возвращается документ с другой стороны с готовым display_name.",
+)
+def get_for_document(document_type: str, document_id: str, supply_db: DbSupplySession, _session=Depends(get_session)):
+    return build_service(supply_db).get_for_document(document_type, document_id)
+
+
 @documents_links_router.get("/by-document/{document_id}", status_code=status.HTTP_200_OK)
 def get_by_document(
     document_id: str,
     supply_db: DbSupplySession,
     _session=Depends(get_session),
+    document_type: str | None = Query(default=None, description="Без типа id может совпасть у разных документов (акт 5 и договор 5)"),
 ):
-    return build_service(supply_db).get_by_document(document_id)
+    return build_service(supply_db).get_by_document(document_id, document_type)
 
 
 @documents_links_router.get("/{link_id}", status_code=status.HTTP_200_OK)

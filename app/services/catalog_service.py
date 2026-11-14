@@ -2,6 +2,7 @@ from datetime import date as dt_date
 from datetime import datetime as dt_datetime
 
 from fastapi import HTTPException, status
+from sqlalchemy import func
 
 from app.models.supply_request import (
     NomenclatureCreate,
@@ -12,6 +13,7 @@ from app.models.supply_request import (
     WarehouseCategoryCreate,
     WarehouseCategoryUpdate,
 )
+from app.models.warehouse import Warehouse, WarehouseList
 from app.repositories.catalog_repository import CatalogRepository
 from app.repositories.request_repository import RequestRepository
 
@@ -66,9 +68,9 @@ class CatalogService:
             "parent_id": updated.parent_id,
         }
 
-    def get_nomenclature(self, search: str | None = None):
+    def get_nomenclature(self, search: str | None = None, user_id: str | None = None):
         rows = self.repo.get_nomenclature(search)
-        return self._serialize_nomenclature_rows(rows)
+        return self._serialize_nomenclature_rows(rows, user_id=user_id)
 
     def get_nomenclature_by_id(self, nomenclature_id: str):
         row = self.repo.get_nomenclature_by_id(nomenclature_id)
@@ -563,7 +565,7 @@ class CatalogService:
         self.repo.delete_price_history(row)
         return None
 
-    def _serialize_nomenclature_rows(self, rows):
+    def _serialize_nomenclature_rows(self, rows, user_id: str | None = None):
         unit_ids = [item.unit_id for item in rows if item.unit_id]
         category_ids = [item.warehouse_category_id for item in rows if item.warehouse_category_id]
         units = self.request_repo.get_units_by_ids(unit_ids)
@@ -571,10 +573,65 @@ class CatalogService:
         units_by_id = {item.id: item for item in units}
         categories_by_id = {item.id: item for item in categories}
 
+        similar_map: dict[str, int] = {}
+        if user_id:
+            from app.models.supply_request import NomenclatureUserSimilar
+            user_rows = (
+                self.repo.db.query(NomenclatureUserSimilar)
+                .filter(NomenclatureUserSimilar.user_id == user_id)
+                .all()
+            )
+            similar_map = {r.nomenclature_id: r.id for r in user_rows}
+
+        nomenclature_ids = [item.id for item in rows]
+        from app.models.supply_request import NomenclatureAgreement
+        agreements = (
+            self.repo.db.query(NomenclatureAgreement)
+            .filter(NomenclatureAgreement.nomenclature_id.in_(nomenclature_ids))
+            .all()
+        )
+        approved: set[str] = set()
+        agreed: set[str] = set()
+        for a in agreements:
+            if a.agreement:
+                if a.type == "magazine":
+                    approved.add(a.nomenclature_id)
+                elif a.type == "director":
+                    agreed.add(a.nomenclature_id)
+
+        warehouse_list_rows = (
+            self.repo.db.query(WarehouseList, Warehouse)
+            .join(Warehouse, Warehouse.id == WarehouseList.warehouse_id)
+            .filter(WarehouseList.nomenclature_id.in_(nomenclature_ids))
+            .filter(WarehouseList.quantity > 0)
+            .all()
+        )
+        warehouses_by_nomenclature: dict[str, list[dict]] = {}
+        for wl, wh in warehouse_list_rows:
+            nid = wl.nomenclature_id
+            if nid not in warehouses_by_nomenclature:
+                warehouses_by_nomenclature[nid] = {}
+            warehouses_by_nomenclature[nid][wh.id] = {"id": wh.id, "name": wh.name}
+
+        from app.models.supply_request import NomenclatureFeedback
+        rating_rows = (
+            self.repo.db.query(
+                NomenclatureFeedback.nomenclature_id,
+                func.round(func.avg(NomenclatureFeedback.star), 1).label("rating"),
+                func.count(NomenclatureFeedback.id).label("feedback_count"),
+            )
+            .filter(NomenclatureFeedback.nomenclature_id.in_(nomenclature_ids))
+            .group_by(NomenclatureFeedback.nomenclature_id)
+            .all()
+        )
+        rating_map: dict[str, float] = {r.nomenclature_id: r.rating for r in rating_rows}
+        feedback_count_map: dict[str, int] = {r.nomenclature_id: r.feedback_count for r in rating_rows}
+
         result = []
         for item in rows:
             unit = units_by_id.get(item.unit_id)
             category = categories_by_id.get(item.warehouse_category_id)
+            similar_id = similar_map.get(item.id)
             result.append(
                 {
                     "id": item.id,
@@ -599,6 +656,13 @@ class CatalogService:
                     "price_opt": item.price_opt,
                     "price_opt2": item.price_opt2,
                     "price_retail": item.price_retail,
+                    "similar": similar_id is not None,
+                    "nomenclature_user_similar_id": similar_id,
+                    "price_approved": item.id in approved,
+                    "price_agreed": item.id in agreed,
+                    "rating": rating_map.get(item.id),
+                    "feedback_count": feedback_count_map.get(item.id, 0),
+                    "warehouses": list(warehouses_by_nomenclature.get(item.id, {}).values()),
                     "created_at": item.created_at,
                     "created_by": item.created_by,
                 }

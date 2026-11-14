@@ -81,6 +81,13 @@ class WarehouseReceiptService:
     def create_inventory_receipt(self, payload: WarehouseReceiptCreate):
         return self._create_receipt(payload, receipt_type=4)
 
+    def get_transfer_receipts(self, warehouse_id: str | None = None):
+        receipts = self.repo.get_receipts_by_type(5, warehouse_id)
+        return self._serialize_receipts(receipts)
+
+    def create_transfer_receipt(self, payload: WarehouseReceiptCreate):
+        return self._create_receipt(payload, receipt_type=5)
+
     def _create_receipt(self, payload: WarehouseReceiptCreate, receipt_type: int):
         data = self._normalize_receipt_payload(payload.model_dump(exclude_unset=True, by_alias=False))
         if not data.get("warehouse_id"):
@@ -394,6 +401,8 @@ class WarehouseReceiptService:
 
         status_ids = [receipt.status_id for receipt in receipts if receipt.status_id]
         warehouse_ids = [receipt.warehouse_id for receipt in receipts if receipt.warehouse_id]
+        warehouse_transfer_ids = [receipt.warehouse_transfer_id for receipt in receipts if receipt.warehouse_transfer_id]
+        all_warehouse_ids = list(set(warehouse_ids + warehouse_transfer_ids))
         from_ids = [receipt.from_id for receipt in receipts if receipt.from_id]
         to_ids = [receipt.to_id for receipt in receipts if receipt.to_id]
         who_write_off_ids = [receipt.who_write_off for receipt in receipts if receipt.who_write_off]
@@ -405,8 +414,9 @@ class WarehouseReceiptService:
                 object_ids.append(item.object_id)
 
         status_names = self.repo.get_status_names(status_ids)
-        warehouses = self.repo.get_warehouses(warehouse_ids)
+        warehouses = self.repo.get_warehouses(all_warehouse_ids)
         counterparty_names = self.reference_repo.get_counterparty_names(from_ids + to_ids + who_write_off_ids + toll_company_ids)
+        counterparty_logos = self.reference_repo.get_counterparty_logos(from_ids + to_ids) if self.reference_repo else {}
         object_rows = self.reference_repo.get_objects_by_ids(object_ids)
         object_names = {row.id: (row.short_name or row.full_name) for row in object_rows}
 
@@ -423,8 +433,10 @@ class WarehouseReceiptService:
                     "type": receipt.type,
                     "from": receipt.from_id,
                     "from_name": counterparty_names.get(receipt.from_id),
+                    "from_logo_url": counterparty_logos.get(receipt.from_id),
                     "to": receipt.to_id,
                     "to_name": counterparty_names.get(receipt.to_id),
+                    "to_logo_url": counterparty_logos.get(receipt.to_id),
                     "area_name": receipt.area_name,
                     "document": receipt.document,
                     "who_write_off": receipt.who_write_off,
@@ -445,6 +457,9 @@ class WarehouseReceiptService:
                     "toll_company_name": counterparty_names.get(receipt.toll_company_id),
                     "upd_documents_id": receipt.upd_documents_id,
                     "retail": receipt.retail,
+                    "warehouse_transfer_id": receipt.warehouse_transfer_id,
+                    "warehouse_transfer_name": warehouses.get(receipt.warehouse_transfer_id).name if warehouses.get(receipt.warehouse_transfer_id) else None,
+                    "deal_id": receipt.deal_id,
                     "status_id": receipt.status_id,
                     "status_name": status_names.get(receipt.status_id),
                     "sum": sum(
@@ -607,7 +622,7 @@ class WarehouseReceiptService:
     @staticmethod
     def _normalize_receipt_payload(data: dict) -> dict:
         normalized = dict(data)
-        for field_name in ("from_id", "to_id", "who_write_off", "object_id", "file_id", "delivery_id", "toll_company_id", "upd_documents_id"):
+        for field_name in ("from_id", "to_id", "who_write_off", "object_id", "file_id", "delivery_id", "toll_company_id", "upd_documents_id", "warehouse_transfer_id", "deal_id"):
             if normalized.get(field_name) == "":
                 normalized[field_name] = None
         if "toll" in normalized and normalized["toll"] is None:

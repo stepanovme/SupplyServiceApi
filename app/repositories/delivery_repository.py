@@ -5,6 +5,7 @@ from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
 from app.models.delivery import Delivery, DeliveryItem
+from app.models.delivery_item_mapping import DeliveryItemMapping
 from app.models.supply_request import StatusRef
 from app.models.warehouse import Warehouse
 
@@ -55,6 +56,15 @@ class DeliveryRepository:
             self.db.query(DeliveryItem)
             .filter(DeliveryItem.delivery_id == delivery_id)
             .order_by(DeliveryItem.created_at.asc(), DeliveryItem.id.asc())
+            .all()
+        )
+
+    def get_mappings_by_delivery_ids(self, delivery_ids: list[str]) -> list[DeliveryItemMapping]:
+        if not delivery_ids:
+            return []
+        return (
+            self.db.query(DeliveryItemMapping)
+            .filter(DeliveryItemMapping.delivery_id.in_(delivery_ids))
             .all()
         )
 

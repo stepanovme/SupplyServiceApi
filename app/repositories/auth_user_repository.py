@@ -65,3 +65,10 @@ class AuthUserRepository:
     def _get_users_columns(self) -> set[str]:
         rows = self.db.execute(text("SHOW COLUMNS FROM users")).mappings().all()
         return {row.get("Field") for row in rows if row.get("Field")}
+
+    def has_role(self, user_id: str, role_id: str) -> bool:
+        row = self.db.execute(
+            text("SELECT 1 FROM user_roles WHERE user_id = :user_id AND role_id = :role_id LIMIT 1"),
+            {"user_id": user_id, "role_id": role_id},
+        ).first()
+        return row is not None

@@ -14,6 +14,7 @@ from app.models.upd_item_mapping import (
     UpdItemMappingUpdate,
 )
 from app.repositories.upd_item_mapping_repository import UpdItemMappingRepository
+from app.services.mistral_retry import mistral_retry
 
 
 class UpdItemMappingService:
@@ -300,8 +301,9 @@ class UpdItemMappingService:
         )
 
         client = Mistral(api_key=mistral_api_key)
-        response = client.chat.complete(
-            model="mistral-large-latest",
+        response = mistral_retry(
+            client.chat.complete,
+            model="ministral-8b-2512",
             messages=[{"role": "user", "content": prompt}],
         )
         content = response.choices[0].message.content

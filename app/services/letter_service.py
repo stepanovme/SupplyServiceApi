@@ -32,6 +32,8 @@ from app.models.letter import (
 )
 from app.models.reference_object import CounterpartyRef
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.documents_list_repository import DocumentsListRepository
+from app.repositories.editor_key_repository import EditorKeyRepository
 from app.repositories.letter_repository import LetterRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 
@@ -40,8 +42,6 @@ MAIL_TEMPLATE_PATH = "/home/webserver/models/supply/tamplates/mails/mail.docx"
 CALLBACK_HOST = "https://supply.st29.ru/apisup"
 JWT_SECRET = "lLst3oyFq7Ml8QPQK5bUkdUU7nrycRuH"
 
-_editor_keys: dict[int, str] = {}
-
 
 class LetterService:
     def __init__(
@@ -49,10 +49,18 @@ class LetterService:
         repo: LetterRepository,
         auth_user_repo: AuthUserRepository | None = None,
         reference_repo: ReferenceObjectRepository | None = None,
+        documents_list_repo: DocumentsListRepository | None = None,
+        department_repo=None,
+        doc_access_service=None,
+        editor_key_repo: EditorKeyRepository | None = None,
     ) -> None:
         self.repo = repo
         self.auth_user_repo = auth_user_repo
         self.reference_repo = reference_repo
+        self.documents_list_repo = documents_list_repo
+        self.department_repo = department_repo
+        self.doc_access_service = doc_access_service
+        self.editor_key_repo = editor_key_repo
 
     def _get_users_map(self, user_ids: list[str]):
         if not self.auth_user_repo:
@@ -160,6 +168,31 @@ class LetterService:
 
     def get_my_letters(self, user_id: str, letter_type: str | None = None) -> list[dict]:
         ids = self.repo.get_letter_ids_by_user(user_id)
+
+        # Добавляем ID на основе document_access_settings
+        if self.doc_access_service and self.department_repo:
+            dept_ids = self.department_repo.get_department_ids_for_user(user_id)
+            doc_type = "letter_outgoing" if letter_type == "outgoing" else "letter_incoming" if letter_type == "incoming" else None
+            if doc_type:
+                extra_ids = self.doc_access_service.get_additional_visible_ids(
+                    doc_type, user_id, dept_ids,
+                    lambda: self.repo.get_all_letter_ids(letter_type),
+                    lambda cp_ids: self.repo.get_letter_ids_by_counterparty(cp_ids, letter_type),
+                )
+            else:
+                extra_out = self.doc_access_service.get_additional_visible_ids(
+                    "letter_outgoing", user_id, dept_ids,
+                    lambda: self.repo.get_all_letter_ids("outgoing"),
+                    lambda cp_ids: self.repo.get_letter_ids_by_counterparty(cp_ids, "outgoing"),
+                )
+                extra_in = self.doc_access_service.get_additional_visible_ids(
+                    "letter_incoming", user_id, dept_ids,
+                    lambda: self.repo.get_all_letter_ids("incoming"),
+                    lambda cp_ids: self.repo.get_letter_ids_by_counterparty(cp_ids, "incoming"),
+                )
+                extra_ids = extra_out + extra_in
+            ids = list(set(ids + extra_ids))
+
         if not ids:
             return []
         all_letters = self.repo.get_letters(letter_type)
@@ -189,6 +222,7 @@ class LetterService:
             "internal_num": row.internal_num,
             "num": row.num,
             "name": row.name,
+            "date": row.date,
             "from_to": row.from_to,
             "from_to_name": counterparty_names.get(row.from_to),
             "where_to": row.where_to,
@@ -207,6 +241,8 @@ class LetterService:
 
     def create_letter(self, payload: LetterCreate, created_by: str) -> dict:
         data = payload.model_dump()
+        data.pop("objects", None)
+        objects = [o.model_dump() for o in payload.objects]
         data["created_by"] = created_by
 
         from_to_internal = self.reference_repo and self.reference_repo.is_counterparty_internal(data.get("from_to", ""))
@@ -222,6 +258,13 @@ class LetterService:
         created = self.repo.create_letter(data)
         full_name = " ".join(part for part in [data.get("name", ""), "№", data.get("num", "")] if part).strip()
         self.repo.create_log(created.id, f"создал письмо {full_name}", created_by)
+        seen = set()
+        for obj in objects:  # several objects can be given right in the create request
+            key = (obj["object_id"], obj["object_type"])
+            if key in seen:
+                continue
+            seen.add(key)
+            self.create_object(LetterObjectCreate(letter_id=created.id, **obj), created_by)
         return self._build_letter_response(created)
 
     def update_letter(self, letter_id: int, payload: LetterUpdate, user_id: str) -> dict:
@@ -233,6 +276,7 @@ class LetterService:
             "num": row.num,
             "internal_num": row.internal_num,
             "name": row.name,
+            "date": row.date,
             "from_to": row.from_to,
             "where_to": row.where_to,
             "type": row.type,
@@ -266,6 +310,12 @@ class LetterService:
                 logs.append(f"удалил наименование письма {old['name']}")
             else:
                 logs.append(f"изменил наименование письма с {old['name'] or '—'} на {data['name']}")
+        if "date" in data and data["date"] != old["date"]:
+            fmt = lambda d: d.strftime("%d.%m.%Y") if d else "—"
+            if data["date"] is None:
+                logs.append(f"удалил дату письма {fmt(old['date'])}")
+            else:
+                logs.append(f"изменил дату письма с {fmt(old['date'])} на {fmt(data['date'])}")
         if "type" in data and data["type"] != old["type"]:
             logs.append(f"изменил тип письма с {old['type']} на {data['type']}")
         if "comment" in data and data["comment"] != old["comment"]:
@@ -449,7 +499,8 @@ class LetterService:
             if not file:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
             key = f"letter-{letter_id}-ver-{file_id}"
-            _editor_keys[letter_id] = key
+            if self.editor_key_repo:
+                self.editor_key_repo.set_key("letter", letter_id, key)
             return {
                 "fileUrl": f"{CALLBACK_HOST}/supply/letter-editor-files/{letter_id}/{file.storage_name}",
                 "callbackUrl": callback_url,
@@ -485,7 +536,8 @@ class LetterService:
         if last_version:
             file_url = f"{CALLBACK_HOST}/supply/letter-editor-files/{letter_id}/{last_version.storage_name}"
             key = f"letter-{letter_id}-{last_version.id}"
-            _editor_keys[letter_id] = key
+            if self.editor_key_repo:
+                self.editor_key_repo.set_key("letter", letter_id, key)
             return {
                 "fileUrl": file_url,
                 "callbackUrl": callback_url,
@@ -496,6 +548,8 @@ class LetterService:
         key = uuid.uuid4().hex
         row.editor_key = key
         self.repo.save_letter(row)
+        if self.editor_key_repo:
+            self.editor_key_repo.set_key("letter", letter_id, key)
         output_filename = f"mail_filled_{key}.docx"
         output_dir = os.path.join(BASE_LETTER_FILES_DIR, str(letter_id))
         os.makedirs(output_dir, exist_ok=True)
@@ -536,7 +590,7 @@ class LetterService:
         }
 
     def force_save(self, letter_id: int) -> dict:
-        key = _editor_keys.get(letter_id)
+        key = self.editor_key_repo.get_key("letter", letter_id) if self.editor_key_repo else None
         if not key:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active editor session")
 
@@ -774,6 +828,8 @@ class LetterService:
         self.repo.save_file(row)
         if "original_name" in updates and updates["original_name"] != old_name:
             self.repo.create_log(row.letter_id, f"переименовал файл {old_name} в {updates['original_name']}", user_id)
+            if self.documents_list_repo:
+                self.documents_list_repo.rename_by_linked_file_id(row.id, updates["original_name"])
         return self._serialize_file(row)
 
     def delete_file(self, file_id: str, user_id: str) -> None:
@@ -785,6 +841,8 @@ class LetterService:
         if row.file_path and os.path.exists(row.file_path):
             os.remove(row.file_path)
         self.repo.delete_file(row)
+        if self.documents_list_repo:
+            self.documents_list_repo.unlink_by_linked_file_id(file_id)
         self.repo.create_log(letter_id, f"удалил файл {original_name}", user_id)
 
     def get_download(self, file_id: str) -> tuple[str, str]:

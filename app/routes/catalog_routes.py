@@ -101,10 +101,10 @@ def update_warehouse_category(
 def get_nomenclature(
     db: DbSupplySession,
     search: str | None = Query(default=None, description="Поиск по совпадению в имени"),
-    _session=Depends(get_session),
+    session: SessionDB = Depends(get_session),
 ):
     service = CatalogService(CatalogRepository(db), RequestRepository(db))
-    return service.get_nomenclature(search)
+    return service.get_nomenclature(search, user_id=str(session.user_id))
 
 
 @catalog_router.get(

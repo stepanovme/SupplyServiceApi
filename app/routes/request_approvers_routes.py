@@ -6,10 +6,18 @@ from app.database import DbSupplySession
 from app.middleware.auth_middleware import get_session
 from app.models.session import SessionDB
 from app.models.supply_request import RequestApproverCreate, RequestApproverUpdate
+from app.repositories.project_user_role_repository import ProjectUserRoleRepository
 from app.repositories.request_repository import RequestRepository
 from app.services.request_approver_service import RequestApproverService
 
 request_approvers_router = APIRouter(prefix="/requests", tags=["RequestApprovers"])
+
+
+def build_service(db: DbSupplySession) -> RequestApproverService:
+    return RequestApproverService(
+        RequestRepository(db),
+        ProjectUserRoleRepository(db),
+    )
 
 
 @request_approvers_router.get(
@@ -22,7 +30,7 @@ def get_my_approvals(
     session: SessionDB = Depends(get_session),
     status_name: Literal["pending", "approved", "rejected"] | None = Query(default=None),
 ):
-    service = RequestApproverService(RequestRepository(db))
+    service = build_service(db)
     return service.get_my_approvals_summary(str(session.user_id), status_name)
 
 
@@ -37,8 +45,8 @@ def create_request_approver(
     db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    service = RequestApproverService(RequestRepository(db))
-    return service.create(request_id, payload)
+    service = build_service(db)
+    return service.create(request_id, payload, str(_session.user_id))
 
 
 @request_approvers_router.patch(
@@ -53,8 +61,8 @@ def update_request_approver(
     db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    service = RequestApproverService(RequestRepository(db))
-    return service.update(request_id, log_id, payload)
+    service = build_service(db)
+    return service.update(request_id, log_id, payload, str(_session.user_id))
 
 
 @request_approvers_router.delete(
@@ -68,6 +76,6 @@ def delete_request_approver(
     db: DbSupplySession,
     _session=Depends(get_session),
 ):
-    service = RequestApproverService(RequestRepository(db))
+    service = build_service(db)
     service.delete(request_id, log_id)
     return None

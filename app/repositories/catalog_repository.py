@@ -83,6 +83,8 @@ class CatalogRepository:
         params = {}
         if search:
             sql += "WHERE name LIKE :search "
+            if "article" in columns:
+                sql += "OR article LIKE :search "
             params["search"] = f"%{search}%"
         if "created_at" in columns:
             sql += "ORDER BY created_at DESC"

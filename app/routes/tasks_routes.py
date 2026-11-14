@@ -68,8 +68,11 @@ def get_my_tasks(
     reference_db: DbReferenceSession,
     _session=Depends(get_session),
     role: str | None = Query(default=None),
+    accomplishment_status: str | None = Query(default=None),
 ):
-    return build_service(supply_db, auth_db, reference_db).get_my_tasks(_session.user_id, role)
+    return build_service(supply_db, auth_db, reference_db).get_my_tasks(
+        _session.user_id, role, accomplishment_status
+    )
 
 
 @tasks_router.get("/tasks", status_code=status.HTTP_200_OK)

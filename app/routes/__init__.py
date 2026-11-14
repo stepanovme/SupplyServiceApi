@@ -2,15 +2,30 @@ from fastapi import APIRouter
 
 from app.routes.catalog_routes import catalog_router
 from app.routes.contracts_routes import contracts_router
+from app.routes.receipt_contracts_routes import receipt_contracts_router
+from app.routes.object_expenditures_routes import object_expenditures_router
+from app.routes.object_groups_routes import object_groups_router
+from app.routes.purchase_receipts_routes import purchase_receipts_router
+from app.routes.receipt_categories_routes import receipt_categories_router
+from app.routes.receipt_seller_logos_routes import receipt_seller_logos_router
+from app.routes.object_name_suggestions_routes import object_name_suggestions_router
+from app.routes.settings_api_bank_routes import settings_api_bank_router, settings_api_bank_accounts_router
+from app.routes.extract_items_routes import extract_items_router
+from app.routes.contract_extracts_routes import contract_extracts_router
+from app.routes.business_cards_routes import business_cards_router
+from app.routes.extract_business_cards_routes import extract_business_cards_router
+from app.routes.invoice_payment_extracts_routes import invoice_payment_extracts_router
 from app.routes.letters_routes import letters_router
 from app.routes.chats_routes import chats_router
 from app.routes.deals_routes import deals_router
 from app.routes.deliveries_routes import deliveries_router
 from app.routes.delivery_item_mappings_routes import delivery_item_mappings_router
+from app.routes.invoice_outgoing_routes import invoice_outgoing_router
 from app.routes.invoice_payment_files_routes import invoice_payment_files_router
 from app.routes.invoices_routes import invoices_router
 from app.routes.item_mappings_routes import item_mappings_router
 from app.routes.project_user_roles_routes import project_user_roles_router
+from app.routes.project_user_roles_template_routes import project_user_roles_template_router
 from app.routes.projects_routes import projects_router
 from app.routes.request_approvers_routes import request_approvers_router
 from app.routes.request_suppliers_routes import request_suppliers_router
@@ -31,20 +46,61 @@ from app.routes.documents_links_routes import documents_links_router
 from app.routes.vk_routes import vk_router
 from app.routes.wiki_routes import wiki_router, wiki_media_router
 from app.routes.news_routes import news_router, news_media_router
+from app.routes.advance_reports_routes import advance_reports_router
+from app.routes.act_routes import act_router, act_media_router
+from app.routes.upd_registry_routes import upd_registry_router
+from app.routes.secret_santa_routes import secret_santa_router
+from app.routes.estimate_acts_routes import estimate_acts_router
+from app.routes.estimates_routes import estimates_router
+from app.routes.price_catalog_routes import price_catalog_router
+from app.routes.construction_routes import construction_router
+from app.routes.custom_registries_routes import custom_registries_router
 from app.routes.warehouses_routes import warehouses_router
 from app.routes.warehouse_receipts_routes import warehouse_receipts_router
+from app.routes.push_routes import push_router
+from app.routes.invoice_users_routes import invoice_users_router
+from app.routes.one_c_routes import one_c_router
+from app.routes.object_settings_routes import object_settings_router
+from app.routes.object_settings_template_routes import object_settings_template_router
+from app.routes.saved_filters_routes import saved_filters_router
+from app.routes.extracts_routes import extracts_router
+from app.routes.notification_feed_routes import notification_feed_router
+from app.routes.task_board_notification_routes import task_board_notification_router
+from app.routes.task_board_note_routes import task_board_note_router
+from app.routes.nomenclature_similar_routes import nomenclature_similar_router
+from app.routes.nomenclature_user_similar_routes import nomenclature_user_similar_router
+from app.routes.nomenclature_competitor_routes import nomenclature_competitor_router
+from app.routes.nomenclature_agreement_routes import nomenclature_agreement_router
+from app.routes.nomenclature_feedback_routes import nomenclature_feedback_router
+from app.routes.nomenclature_group_routes import nomenclature_group_router
+from app.routes.documents_list_routes import documents_list_router
+from app.routes.buh_routes import buh_router
+from app.routes.document_access_settings_routes import document_access_settings_router
+from app.routes.roles_routes import roles_router
+from app.routes.invoice_table_columns_routes import invoice_table_columns_router
+
+from app.routes.user_company_positions_routes import user_company_positions_router
+
+from app.routes.edo_routes import edo_router
+
+from app.routes.ios_push_routes import router as ios_push_router
 
 main_router = APIRouter(prefix="/api/supply")
+main_router.include_router(ios_push_router)
+main_router.include_router(edo_router)
+main_router.include_router(user_company_positions_router)
 
 main_router.include_router(projects_router)
 main_router.include_router(chats_router)
 main_router.include_router(deals_router)
 main_router.include_router(deliveries_router)
 main_router.include_router(delivery_item_mappings_router)
+main_router.include_router(invoice_outgoing_router)
 main_router.include_router(invoice_payment_files_router)
 main_router.include_router(invoices_router)
 main_router.include_router(item_mappings_router)
 main_router.include_router(project_user_roles_router)
+main_router.include_router(project_user_roles_template_router)
 main_router.include_router(request_approvers_router)
 main_router.include_router(request_suppliers_router)
 main_router.include_router(requests_router)
@@ -60,6 +116,21 @@ main_router.include_router(warehouses_router)
 main_router.include_router(warehouse_receipts_router)
 main_router.include_router(catalog_router)
 main_router.include_router(contracts_router)
+main_router.include_router(receipt_contracts_router)
+main_router.include_router(object_expenditures_router)
+main_router.include_router(object_groups_router)
+main_router.include_router(purchase_receipts_router)
+main_router.include_router(advance_reports_router)
+main_router.include_router(receipt_categories_router)
+main_router.include_router(receipt_seller_logos_router)
+main_router.include_router(object_name_suggestions_router)
+main_router.include_router(settings_api_bank_router)
+main_router.include_router(settings_api_bank_accounts_router)
+main_router.include_router(extract_items_router)
+main_router.include_router(contract_extracts_router)
+main_router.include_router(business_cards_router)
+main_router.include_router(extract_business_cards_router)
+main_router.include_router(invoice_payment_extracts_router)
 main_router.include_router(letters_router)
 main_router.include_router(tasks_router)
 main_router.include_router(tickets_router)
@@ -71,3 +142,33 @@ main_router.include_router(wiki_router)
 main_router.include_router(wiki_media_router)
 main_router.include_router(news_router)
 main_router.include_router(news_media_router)
+main_router.include_router(act_router)
+main_router.include_router(act_media_router)
+main_router.include_router(upd_registry_router)
+main_router.include_router(secret_santa_router)
+main_router.include_router(estimate_acts_router)
+main_router.include_router(estimates_router)
+main_router.include_router(price_catalog_router)
+main_router.include_router(construction_router)
+main_router.include_router(custom_registries_router)
+main_router.include_router(one_c_router)
+main_router.include_router(push_router)
+main_router.include_router(invoice_users_router)
+main_router.include_router(object_settings_router)
+main_router.include_router(object_settings_template_router)
+main_router.include_router(saved_filters_router)
+main_router.include_router(extracts_router)
+main_router.include_router(notification_feed_router)
+main_router.include_router(task_board_notification_router)
+main_router.include_router(task_board_note_router)
+main_router.include_router(nomenclature_similar_router)
+main_router.include_router(nomenclature_user_similar_router)
+main_router.include_router(nomenclature_competitor_router)
+main_router.include_router(nomenclature_agreement_router)
+main_router.include_router(nomenclature_feedback_router)
+main_router.include_router(nomenclature_group_router)
+main_router.include_router(documents_list_router)
+main_router.include_router(buh_router)
+main_router.include_router(document_access_settings_router)
+main_router.include_router(roles_router)
+main_router.include_router(invoice_table_columns_router)

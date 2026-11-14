@@ -6,6 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlalchemy import CHAR, Column, Date, DateTime, Enum, Float, Integer, String, Text
 
+from app.models.object_ref import ObjectRef
 from app.database import SupplyBase
 
 
@@ -20,6 +21,7 @@ class Letter(SupplyBase):
     internal_num = Column(String(30), nullable=False)
     num = Column(String(100), nullable=True)
     name = Column(Text, nullable=True)
+    date = Column(Date, nullable=True, index=True)  # the date on the letter itself
     from_to = Column(CHAR(36), nullable=False, index=True)
     where_to = Column(CHAR(36), nullable=False, index=True)
     type = Column(Enum("outgoing", "incoming"), nullable=False)
@@ -98,16 +100,22 @@ class LetterCreate(BaseModel):
     internal_num: str | None = Field(default=None)
     num: str | None = Field(default=None)
     name: str | None = Field(default=None)
+    date: date_type | None = Field(default=None, description="Дата письма (YYYY-MM-DD)")
     from_to: str
     where_to: str
     type: Literal["outgoing", "incoming"]
     comment: str | None = Field(default=None)
+    objects: list[ObjectRef] = Field(
+        default_factory=list,
+        description="Объекты письма, добавляются сразу при создании (по одному можно добавлять и через /letter-objects)",
+    )
 
 
 class LetterUpdate(BaseModel):
     internal_num: str | None = Field(default=None)
     num: str | None = Field(default=None)
     name: str | None = Field(default=None)
+    date: date_type | None = Field(default=None, description="Дата письма (YYYY-MM-DD); null - убрать")
     from_to: str | None = Field(default=None)
     where_to: str | None = Field(default=None)
     type: Literal["outgoing", "incoming"] | None = Field(default=None)

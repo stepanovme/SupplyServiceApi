@@ -10,6 +10,7 @@ from fastapi import HTTPException, status
 
 from app.models.item_mapping import ItemMappingCreate, ItemMappingUpdate
 from app.repositories.item_mapping_repository import ItemMappingRepository
+from app.services.mistral_retry import mistral_retry
 
 
 class ItemMappingService:
@@ -309,8 +310,9 @@ class ItemMappingService:
         )
 
         client = Mistral(api_key=mistral_api_key)
-        response = client.chat.complete(
-            model="mistral-large-latest",
+        response = mistral_retry(
+            client.chat.complete,
+            model="ministral-8b-2512",
             messages=[{"role": "user", "content": prompt}],
         )
         content = response.choices[0].message.content

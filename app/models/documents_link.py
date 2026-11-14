@@ -19,6 +19,15 @@ class DocumentsLink(SupplyBase):
     created_by = Column(CHAR(36), nullable=False)
 
 
+# Типы документов, между которыми можно ставить связи; файлы (file_*) - вложения договоров и писем.
+LINKABLE_DOCUMENT_TYPES = ("contract", "act", "letter", "invoice", "upd", "registry_record")
+DOCUMENT_TYPE_LABELS = {
+    "contract": "Договор", "act": "Акт", "letter": "Письмо", "invoice": "Счёт",
+    "upd": "УПД", "registry_record": "Запись пользовательского реестра",
+}
+FILE_DOCUMENT_TYPES = ("file_contract", "file_letter")
+
+
 class DocumentsLinkCreate(BaseModel):
     document_linked_first: str
     document_type_first: str

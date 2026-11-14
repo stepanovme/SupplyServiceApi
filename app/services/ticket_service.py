@@ -20,6 +20,9 @@ class TicketService:
 
     # --- Ticket ---
 
+    def get_incomplete_count(self, user_id: str) -> int:
+        return self.repo.count_incomplete_assignee(user_id)
+
     def get_all(self) -> list[dict]:
         rows = self.repo.get_all()
         status_map = self._get_status_map(rows)

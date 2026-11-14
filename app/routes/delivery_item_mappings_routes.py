@@ -10,6 +10,7 @@ from app.models.delivery_item_mapping import (
 from app.models.session import SessionDB
 from app.repositories.auth_user_repository import AuthUserRepository
 from app.repositories.delivery_item_mapping_repository import DeliveryItemMappingRepository
+from app.repositories.request_repository import RequestRepository
 from app.services.delivery_item_mapping_service import DeliveryItemMappingService
 
 delivery_item_mappings_router = APIRouter(prefix="/delivery-item-mappings", tags=["DeliveryItemMappings"])
@@ -19,6 +20,7 @@ def build_service(db: DbSupplySession, auth_db: DbAuthSession) -> DeliveryItemMa
     return DeliveryItemMappingService(
         DeliveryItemMappingRepository(db),
         AuthUserRepository(auth_db),
+        RequestRepository(db),
     )
 
 

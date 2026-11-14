@@ -167,6 +167,36 @@ def create_inventory_warehouse_receipt(
 
 
 @warehouse_receipts_router.get(
+    "/transfers",
+    status_code=status.HTTP_200_OK,
+    summary="Получить список накладных на перемещение",
+)
+def get_warehouse_receipt_transfers(
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
+    warehouse_id: str | None = Query(default=None, description="Фильтр по складу"),
+    _session=Depends(get_session),
+):
+    service = build_warehouse_receipt_service(supply_db, reference_db)
+    return service.get_transfer_receipts(warehouse_id)
+
+
+@warehouse_receipts_router.post(
+    "/transfers",
+    status_code=status.HTTP_201_CREATED,
+    summary="Создать накладную на перемещение",
+)
+def create_warehouse_receipt_transfer(
+    payload: WarehouseReceiptCreate,
+    supply_db: DbSupplySession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_warehouse_receipt_service(supply_db, reference_db)
+    return service.create_transfer_receipt(payload)
+
+
+@warehouse_receipts_router.get(
     "/{receipt_id}",
     status_code=status.HTTP_200_OK,
     summary="Получить приходную накладную",

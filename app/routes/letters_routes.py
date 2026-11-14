@@ -1,7 +1,7 @@
 import os
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse, JSONResponse
 
 from app.database import DbAuthSession, DbReferenceSession, DbSupplySession
@@ -19,8 +19,13 @@ from app.models.letter import (
     LetterUserRoleUpdate,
 )
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.department_repository import DepartmentRepository
+from app.repositories.document_access_setting_repository import DocumentAccessSettingRepository
+from app.repositories.documents_list_repository import DocumentsListRepository
+from app.repositories.editor_key_repository import EditorKeyRepository
 from app.repositories.letter_repository import LetterRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
+from app.services.document_access_setting_service import DocumentAccessSettingService
 from app.services.letter_service import BASE_LETTER_FILES_DIR, LetterService
 
 letters_router = APIRouter(prefix="", tags=["Letters"])
@@ -35,6 +40,10 @@ def build_service(
         LetterRepository(supply_db),
         AuthUserRepository(auth_db) if auth_db else None,
         ReferenceObjectRepository(reference_db) if reference_db else None,
+        DocumentsListRepository(supply_db),
+        DepartmentRepository(supply_db),
+        DocumentAccessSettingService(DocumentAccessSettingRepository(supply_db)),
+        EditorKeyRepository(supply_db),
     )
 
 
@@ -209,6 +218,28 @@ def get_letter(
     _session=Depends(get_session),
 ):
     return build_service(supply_db, auth_db, reference_db).get_letter(letter_id)
+
+
+@letters_router.get("/letters/{letter_id}/access", status_code=status.HTTP_200_OK)
+def check_letter_access(
+    letter_id: int,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_service(supply_db, auth_db, reference_db)
+    letter = service.repo.get_letter_by_id(letter_id)
+    if not letter:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Letter not found")
+    dept_repo = service.department_repo
+    doc_access = service.doc_access_service
+    dept_ids = dept_repo.get_department_ids_for_user(str(_session.user_id)) if dept_repo else []
+    counterparty_ids = [letter.from_to, letter.where_to]
+    doc_type = "letter_outgoing" if letter.type == "outgoing" else "letter_incoming"
+    return doc_access.check_document_access(
+        doc_type, str(_session.user_id), dept_ids, counterparty_ids,
+    )
 
 
 @letters_router.post("/letters", status_code=status.HTTP_201_CREATED)

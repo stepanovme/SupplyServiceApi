@@ -38,9 +38,11 @@ from app.models.task import (
     msk_now,
 )
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.push_subscription_repository import PushSubscriptionRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.repositories.task_repository import TaskRepository
 from app.repositories.vk_repository import VkRepository
+from app.services.push_service import PushService
 from app.services.vk_service import VkService
 from app.services.ws_manager import ws_manager
 
@@ -110,18 +112,61 @@ class TaskService:
         return "\n".join(lines)
 
     def _send_vk_notification(self, user_id: str, message: str) -> None:
+        print(f"[TASK][VK] _send_vk_notification user_id={user_id} message='{message[:60]}...'")
         try:
             vk_repo = VkRepository(self.repo.db)
             service = VkService(vk_repo)
             vk_id = service.get_vk_id(user_id)
+            print(f"[TASK][VK] vk_id for user {user_id} = {vk_id}")
             if vk_id:
                 service.send_notification(vk_id, message)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[TASK][VK] exception: {e}")
 
-    def _send_vk_task_notification(self, user_id: str, task, actor_fio: str | None = None, header: str = "Новая задача") -> None:
+    def _send_push_notification(self, user_id: str, title: str, body: str) -> None:
+        print(f"[TASK][PUSH] _send_push_notification user_id={user_id} title='{title}' body='{body}'")
+        try:
+            repo = PushSubscriptionRepository(self.repo.db)
+            service = PushService(repo)
+            sent = service.send_notification(user_id, title, body)
+            print(f"[TASK][PUSH] result: sent={sent}")
+        except Exception as e:
+            print(f"[TASK][PUSH] exception: {e}")
+
+    def _send_vk_task_notification(self, user_id: str, task, actor_fio: str | None = None, header: str = "Новая задача", actor_id: str | None = None) -> None:
+        if task and getattr(task, "connection_type", None) == "task-columns" and getattr(task, "connection_id", None):
+            column_id = task.connection_id
+            board_id = None
+            col = self.repo.get_board_column_by_id(column_id)
+            if col:
+                board_id = col.task_board_id
+            from app.repositories.task_board_notification_repository import TaskBoardNotificationRepository
+            tbn_repo = TaskBoardNotificationRepository(self.repo.db)
+            if tbn_repo.is_muted(user_id, task_board_id=board_id, task_boards_column_id=column_id):
+                return
+
         message = self._build_vk_task_text(task, actor_fio, header)
         self._send_vk_notification(user_id, message)
+        name = task.name or "Без названия"
+        self._send_push_notification(user_id, "Новая задача", name)
+
+        from app.services.notification_feed_service import push_notification
+
+        notif_type_map = {
+            "Новая задача": "task_assigned",
+            "Задача завершена": "task_completed",
+            "Добавлен результат работы": "task_result_added",
+            "Выполнение задачи завершено": "task_accomplishment_ended",
+        }
+        notif_type = notif_type_map.get(header, "task_assigned")
+        push_notification(
+            self.repo.db, user_id, notif_type,
+            title=header,
+            body=name,
+            object_type="task",
+            object_id=str(task.id) if hasattr(task, "id") and task.id else "",
+            related_user_id=actor_id or "",
+        )
 
     def _get_user_fio(self, user_id: str) -> str:
         if not self.auth_user_repo or not user_id:
@@ -317,10 +362,15 @@ class TaskService:
             rows = self.repo.get_tasks()
         return [self._serialize_task(r) for r in rows]
 
-    def get_my_tasks(self, user_id: str, role: str | None = None) -> list[dict]:
+    def get_my_tasks(self, user_id: str, role: str | None = None, accomplishment_status: str | None = None) -> list[dict]:
         ids = self.repo.get_task_ids_by_user(user_id, role)
         if not ids:
             return []
+        if accomplishment_status:
+            acc_ids = self.repo.get_task_ids_by_accomplishment_status(user_id, accomplishment_status)
+            ids = [tid for tid in ids if tid in acc_ids]
+            if not ids:
+                return []
         all_tasks = self.repo.get_tasks()
         rows = [r for r in all_tasks if r.id in ids]
         return [self._serialize_task(r) for r in rows]
@@ -339,6 +389,8 @@ class TaskService:
         data["created_by"] = created_by
         if "status_id" not in data or not data.get("status_id"):
             data["status_id"] = "e0896c9d-7646-11f1-b481-bc241127d0bd"
+        data.setdefault("object_id", "")
+        data.setdefault("object_type", "object_id")
         created = self.repo.create_task(data)
         serialized = self._serialize_task(created)
         actor_fio = self._get_user_fio(created_by)
@@ -349,6 +401,16 @@ class TaskService:
         self._notify_task_log(created.id, msg, created_by)
         self._notify_incomplete_count(created_by)
 
+        from app.services.notification_feed_service import push_notification
+
+        for uid in user_ids:
+            if uid != created_by:
+                push_notification(self.repo.db, uid, "task_assigned",
+                                  title="Новая задача",
+                                  body=f"{actor_fio}: {created.name}",
+                                  object_type="task", object_id=created.id,
+                                  related_user_id=created_by)
+
         # VK: notify all board participants about new task
         if created.connection_type == "task-columns" and created.connection_id:
             col = self.repo.get_board_column_by_id(created.connection_id)
@@ -358,7 +420,7 @@ class TaskService:
                     board_users = self._get_board_user_ids(board.id)
                     for uid in board_users:
                         if uid != created_by:
-                            self._send_vk_task_notification(uid, created, actor_fio)
+                            self._send_vk_task_notification(uid, created, actor_fio, actor_id=created_by)
 
         return serialized
 
@@ -419,6 +481,12 @@ class TaskService:
             elif new_val == resumed_id and old_val == completed_id:
                 messages.append("Возобновлено выполнение задачи")
 
+            resumption_required_id = "e0896c9d-7646-11f1-b481-bc241127d0bd"
+            if new_val == resumption_required_id and old_val == completed_id:
+                task_name = row.name or "Без названия"
+                msg = f"{task_name}. Постановщик требует возобновлений работ по задаче."
+                messages.append(msg)
+
         for key, value in updates.items():
             setattr(row, key, value)
         self.repo.save_task(row)
@@ -435,7 +503,33 @@ class TaskService:
             self._notify_incomplete_count(uid)
 
         if "status_id" in updates and updates.get("status_id") == completed_id and row.created_by != user_id:
-            self._send_vk_task_notification(row.created_by, row, actor_fio, "Задача завершена")
+            self._send_vk_task_notification(row.created_by, row, actor_fio, "Задача завершена", actor_id=user_id)
+
+        if "status_id" in updates and updates.get("status_id") == completed_id:
+            from app.services.notification_feed_service import push_notification
+            for uid in user_ids:
+                if uid in (user_id, row.created_by):
+                    continue
+                push_notification(self.repo.db, uid, "task_completed",
+                                  title="Задача завершена",
+                                  body=f"{actor_fio}: {row.name}",
+                                  object_type="task", object_id=task_id,
+                                  related_user_id=user_id)
+
+        if "status_id" in updates and updates.get("status_id") == "e0896c9d-7646-11f1-b481-bc241127d0bd":
+            task_name = row.name or "Без названия"
+            for uid in user_ids:
+                if uid == user_id:
+                    continue
+                msg = f"{task_name}. Постановщик требует возобновлений работ по задаче."
+                self._send_vk_notification(uid, msg)
+                self._send_push_notification(uid, "Новая задача", task_name)
+                from app.services.notification_feed_service import push_notification
+                push_notification(self.repo.db, uid, "task_resumption_required",
+                                  title="Требуется возобновление",
+                                  body=msg,
+                                  object_type="task", object_id=task_id,
+                                  related_user_id=user_id)
 
         return serialized
 
@@ -574,7 +668,17 @@ class TaskService:
             ws_manager.send_task_updated(user_ids, serialized)
             self._notify_incomplete_count(created.user_id)
             if created.role in ("responsible", "co-executor") and created.user_id != task.created_by:
-                self._send_vk_task_notification(created.user_id, task, actor_fio)
+                self._send_vk_task_notification(created.user_id, task, actor_fio, actor_id=created_by)
+            else:
+                from app.services.notification_feed_service import push_notification
+
+                if created.role == "observer" and created.user_id != task.created_by:
+                    task_name = task.name or "Без названия"
+                    push_notification(self.repo.db, created.user_id, "task_observer",
+                                      title="Новая задача",
+                                      body=f"Вы наблюдатель задачи «{task_name}»",
+                                      object_type="task", object_id=created.task_id,
+                                      related_user_id=created_by)
         return self._serialize_user_role(created, users_by_id)
 
     def update_user_role(self, role_id: str, payload: TaskUserRoleUpdate, user_id: str) -> dict:
@@ -664,7 +768,19 @@ class TaskService:
             ws_manager.send_task_updated(user_ids, serialized)
             task = self.repo.get_task_by_id(created.task_id)
             if task and task.created_by != created_by:
-                self._send_vk_task_notification(task.created_by, task, actor_fio, "Добавлен результат работы")
+                self._send_vk_task_notification(task.created_by, task, actor_fio, "Добавлен результат работы", actor_id=created_by)
+            from app.services.notification_feed_service import push_notification
+            exempt = {created_by}
+            if task and task.created_by != created_by:
+                exempt.add(task.created_by)
+            for uid in user_ids:
+                if uid in exempt:
+                    continue
+                push_notification(self.repo.db, uid, "task_result_added",
+                                  title="Добавлен результат к задаче",
+                                  body=f"{actor_fio}: {task.name if task else ''}",
+                                  object_type="task", object_id=created.task_id,
+                                  related_user_id=created_by)
         return self._serialize_result(created)
 
     def update_result(self, result_id: str, payload: TaskResultUpdate, user_id: str) -> dict:
@@ -1143,10 +1259,31 @@ class TaskService:
             for uid in user_ids:
                 self._notify_incomplete_count(uid)
 
+            task = self.repo.get_task_by_id(task_id)
+            from app.services.notification_feed_service import push_notification
+            if created.date_start and not created.date_stop and not created.date_end:
+                for uid in user_ids:
+                    if uid == created_by:
+                        continue
+                    push_notification(self.repo.db, uid, "task_accomplishment_started",
+                                      title="Начало выполнения задачи",
+                                      body=f"{actor_fio} начал выполнение задачи «{task.name if task else ''}»",
+                                      object_type="task", object_id=task_id,
+                                      related_user_id=created_by)
+            elif created.date_stop and not created.date_end:
+                for uid in user_ids:
+                    if uid == created_by:
+                        continue
+                    push_notification(self.repo.db, uid, "task_accomplishment_stopped",
+                                      title="Выполнение задачи приостановлено",
+                                      body=f"{actor_fio} приостановил выполнение задачи «{task.name if task else ''}»",
+                                      object_type="task", object_id=task_id,
+                                      related_user_id=created_by)
+
         if created.date_end and task_id:
             task = self.repo.get_task_by_id(task_id)
             if task and task.created_by != created_by:
-                self._send_vk_task_notification(task.created_by, task, actor_fio, "Выполнение задачи завершено")
+                self._send_vk_task_notification(task.created_by, task, actor_fio, "Выполнение задачи завершено", actor_id=created_by)
 
         return self._serialize_accomplishment(created)
 
@@ -1180,16 +1317,42 @@ class TaskService:
         for msg in messages:
             self.repo.create_log(task_id, msg, user_id)
         if task_id and messages:
-            serialized = self._serialize_task(self.repo.get_task_by_id(task_id))
+            task = self.repo.get_task_by_id(task_id)
+            serialized = self._serialize_task(task)
             user_ids = self._get_task_user_ids(task_id)
             ws_manager.send_task_updated(user_ids, serialized)
             for uid in user_ids:
                 self._notify_incomplete_count(uid)
 
+            from app.services.notification_feed_service import push_notification
+            for msg in messages:
+                if "начал выполнение" in msg:
+                    ntype = "task_accomplishment_started"
+                    ntitle = "Начало выполнения задачи"
+                elif "приостановил" in msg:
+                    ntype = "task_accomplishment_stopped"
+                    ntitle = "Выполнение задачи приостановлено"
+                elif "возобновил" in msg:
+                    ntype = "task_accomplishment_resumed"
+                    ntitle = "Выполнение задачи возобновлено"
+                elif "завершил" in msg:
+                    ntype = "task_accomplishment_ended"
+                    ntitle = "Выполнение задачи завершено"
+                else:
+                    continue
+                for uid in user_ids:
+                    if uid == user_id:
+                        continue
+                    push_notification(self.repo.db, uid, ntype,
+                                      title=ntitle,
+                                      body=f"{msg} «{task.name if task else ''}»",
+                                      object_type="task", object_id=task_id,
+                                      related_user_id=user_id)
+
         if completed_now and task_id:
             task = self.repo.get_task_by_id(task_id)
             if task and task.created_by != user_id:
-                self._send_vk_task_notification(task.created_by, task, actor_fio, "Выполнение задачи завершено")
+                self._send_vk_task_notification(task.created_by, task, actor_fio, "Выполнение задачи завершено", actor_id=user_id)
 
         return self._serialize_accomplishment(row)
 

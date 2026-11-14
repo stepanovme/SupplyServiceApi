@@ -17,7 +17,13 @@ from app.models.deal import Deal, DealDelivery, DealProduct, DealService
 from app.models.delivery import Delivery, DeliveryItem
 from app.models.delivery_item_mapping import DeliveryItemMapping
 from app.models.item_mapping import ItemMapping
-from app.models.invoice import Invoice, InvoiceItem, InvoiceLog, InvoicePayment
+from app.models.invoice import Invoice, InvoiceFile, InvoiceItem, InvoiceLog, InvoicePayment
+from app.models.invoice_outgoing import (
+    InvoiceOutgoing,
+    InvoiceOutgoingItem,
+    InvoiceOutgoingNomenclature,
+    InvoiceOutgoingUnit,
+)
 from app.models.invoice_payment_file import InvoicePaymentFile
 from app.models.project import Project
 from app.models.project_user_role import ProjectUserRole
@@ -66,3 +72,16 @@ from app.models.warehouse_receipt import (
 from app.models.wiki import WikiPage
 from app.models.wiki_file import WikiFile
 from app.models.news import NewsPost
+from app.models.one_c import OneCOrganization, OneCProfile
+from app.models.act import Act, ActFile, ActFolder, ActStatus, ActType, ActUserRole
+from app.models.project_user_role_template import ProjectUserRoleTemplate
+from app.models.invoice_user import InvoiceUser
+from app.models.object_setting import ObjectSetting
+from app.models.object_settings_template import ObjectSettingsTemplate
+from app.models.push_subscription import PushSubscription
+from app.models.saved_filter import SavedFilter
+from app.models.extract import Extract, ExtractFile, ExtractItem, ExtractItemPayment
+from app.models.notification_feed import NotificationFeed
+from app.models.documents_list import DocumentsList
+from app.models.buh import BuhAccess, BuhFile, BuhFolder
+from app.models.document_access_setting import DocumentAccessSetting

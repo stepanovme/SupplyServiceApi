@@ -6,6 +6,7 @@ from collections import defaultdict
 from datetime import datetime
 
 from fastapi import WebSocket
+from app.database import current_tenant
 
 
 def _json_default(obj):
@@ -16,7 +17,7 @@ def _json_default(obj):
 
 class WSManager:
     def __init__(self):
-        self._connections: dict[str, list[WebSocket]] = defaultdict(list)
+        self._connections: dict[tuple[str | None, str], list[WebSocket]] = defaultdict(list)
         self._loop: asyncio.AbstractEventLoop | None = None
 
     def set_loop(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -25,15 +26,15 @@ class WSManager:
 
     async def connect(self, user_id: str, ws: WebSocket) -> None:
         await ws.accept()
-        self._connections[user_id].append(ws)
-        print(f"[WS] Connected: {user_id}, total connections: {len(self._connections.get(user_id, []))}")
+        self._connections[(current_tenant.get(), user_id)].append(ws)
+        print(f"[WS] Connected: {user_id}, total connections: {len(self._connections.get((current_tenant.get(), user_id), []))}")
 
     def disconnect(self, user_id: str, ws: WebSocket) -> None:
-        user_sockets = self._connections.get(user_id, [])
+        user_sockets = self._connections.get((current_tenant.get(), user_id), [])
         if ws in user_sockets:
             user_sockets.remove(ws)
-        if not self._connections.get(user_id):
-            self._connections.pop(user_id, None)
+        if not user_sockets:
+            self._connections.pop((current_tenant.get(), user_id), None)
         print(f"[WS] Disconnected: {user_id}")
 
     async def _send_json(self, ws: WebSocket, data: dict) -> None:
@@ -50,7 +51,7 @@ class WSManager:
             fut.add_done_callback(lambda f: f.exception())
 
     def send_to_user(self, user_id: str, data: dict) -> None:
-        sockets = self._connections.get(user_id, [])
+        sockets = self._connections.get((current_tenant.get(), user_id), [])
         print(f"[WS] send_to_user {user_id}: {len(sockets)} sockets, data type={data.get('type')}")
         for ws in sockets:
             self._schedule_send(ws, data)
@@ -74,10 +75,11 @@ class WSManager:
         chat_id: int,
         message: dict,
         sender_id: str,
+        chat: dict | None = None,
     ) -> None:
         self.broadcast_to_chat(
             member_ids,
-            {"type": "new_message", "chat_id": chat_id, "message": message},
+            {"type": "new_message", "chat_id": chat_id, "chat": chat, "message": message},
             exclude_user_id=sender_id,
         )
 
@@ -183,6 +185,9 @@ class WSManager:
     def send_incomplete_count(self, user_id: str, count: int) -> None:
         self.send_to_user(user_id, {"type": "incomplete_count", "count": count})
 
+    def send_unread_count(self, user_id: str, count: int) -> None:
+        self.send_to_user(user_id, {"type": "unread_count", "unread_count": count})
+
     # --- Boards & Columns ---
 
     def send_column_created(self, user_ids: list[str], board_id: str, column: dict) -> None:
@@ -202,6 +207,35 @@ class WSManager:
 
     def send_board_deleted(self, user_ids: list[str], board_id: str) -> None:
         self.broadcast_to_chat(user_ids, {"type": "board_deleted", "board_id": board_id})
+
+
+    def send_notification(self, user_id: str, notification: dict, unread_count: int) -> None:
+        self.send_to_user(user_id, {"type": "notification", "notification": notification})
+        self.send_to_user(user_id, {"type": "notification_unread", "unread_count": unread_count})
+
+    # --- Requests ---
+
+    def send_request_approval_needed(self, user_id: str, request: dict) -> None:
+        self.send_to_user(user_id, {"type": "request_approval_needed", "request": request})
+
+    def send_request_approval_needed_many(self, user_ids: list[str], request: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "request_approval_needed", "request": request})
+
+    def send_request_status_changed(self, user_ids: list[str], request: dict, exclude_user_id: str | None = None) -> None:
+        self.broadcast_to_chat(
+            user_ids,
+            {"type": "request_status_changed", "request": request},
+            exclude_user_id=exclude_user_id,
+        )
+
+    def send_request_invoice_needed(self, user_ids: list[str], request: dict) -> None:
+        self.broadcast_to_chat(user_ids, {"type": "request_invoice_needed", "request": request})
+
+    def send_request_invoice_attached(self, user_ids: list[str], request: dict, file: dict) -> None:
+        self.broadcast_to_chat(
+            user_ids,
+            {"type": "request_invoice_attached", "request": request, "file": file},
+        )
 
 
 ws_manager = WSManager()

@@ -140,3 +140,15 @@ class RequestFileRepository:
             )
             .first()
         )
+
+    def get_files_by_ids(self, file_ids: list[str]) -> list[FileDB]:
+        if not file_ids:
+            return []
+        return (
+            self.db.query(FileDB)
+            .filter(
+                FileDB.id.in_(file_ids),
+                FileDB.status == "active",
+            )
+            .all()
+        )

@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from datetime import datetime
+
+from sqlalchemy import Integer, func, select
 from sqlalchemy.orm import Session
 
 from app.models.chat import Attachment, Chat, ChatMember, ChatReadStatus, Message, MessageMention
@@ -59,6 +62,10 @@ class ChatRepository:
     def get_members(self, chat_id: int) -> list[ChatMember]:
         return self.db.query(ChatMember).filter(ChatMember.chat_id == chat_id).all()
 
+    def get_user_chat_ids(self, user_id: str) -> list[int]:
+        rows = self.db.query(ChatMember.chat_id).filter(ChatMember.user_id == user_id).all()
+        return [r[0] for r in rows]
+
     def get_member(self, chat_id: int, user_id: str) -> ChatMember | None:
         return (
             self.db.query(ChatMember)
@@ -98,6 +105,15 @@ class ChatRepository:
             .first()
         )
         return message.id if message else None
+
+    def get_last_message_info(self, chat_id: int) -> tuple[int, datetime] | None:
+        message = (
+            self.db.query(Message.id, Message.created_at)
+            .filter(Message.chat_id == chat_id)
+            .order_by(Message.id.desc())
+            .first()
+        )
+        return (message.id, message.created_at) if message else None
 
     def create_message(self, chat_id: int, payload: dict) -> Message:
         row = Message(chat_id=chat_id, **payload)
@@ -237,3 +253,27 @@ class ChatRepository:
             .filter(MessageMention.chat_id == chat_id, MessageMention.user_id == user_id, MessageMention.is_viewed == False)
             .count()
         )
+
+    def get_unread_count(self, user_id: str) -> int:
+        last_read = (
+            select(ChatReadStatus.last_read_message_id)
+            .where(
+                ChatReadStatus.chat_id == ChatMember.chat_id,
+                ChatReadStatus.user_id == user_id,
+            )
+            .correlate(ChatMember)
+            .scalar_subquery()
+        )
+        msg_count = (
+            select(func.count(Message.id))
+            .where(
+                Message.chat_id == ChatMember.chat_id,
+                Message.id > func.coalesce(last_read, 0),
+            )
+            .correlate(ChatMember)
+            .scalar_subquery()
+        )
+        stmt = select(
+            func.coalesce(func.sum(msg_count), 0).cast(Integer)
+        ).select_from(ChatMember).where(ChatMember.user_id == user_id)
+        return int(self.db.execute(stmt).scalar() or 0)

@@ -20,6 +20,7 @@ class DeliveryItemMapping(SupplyBase):
     delivery_quantity = Column(Float, nullable=True)
     nomenclature_quantity = Column(Float, nullable=True)
     group_number = Column(Integer, nullable=True)
+    warehouse_receipt_id = Column(CHAR(36), nullable=True, index=True)
     created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
@@ -32,6 +33,7 @@ class DeliveryItemMappingCreate(BaseModel):
     delivery_quantity: float | None = Field(default=None)
     nomenclature_quantity: float | None = Field(default=None)
     group_number: int | None = Field(default=None)
+    warehouse_receipt_id: str | None = Field(default=None)
 
 
 class DeliveryItemMappingUpdate(BaseModel):
@@ -42,6 +44,7 @@ class DeliveryItemMappingUpdate(BaseModel):
     delivery_quantity: float | None = Field(default=None)
     nomenclature_quantity: float | None = Field(default=None)
     group_number: int | None = Field(default=None)
+    warehouse_receipt_id: str | None = Field(default=None)
 
 
 class DeliveryItemMappingAutoMatchRequest(BaseModel):

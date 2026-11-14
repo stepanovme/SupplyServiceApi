@@ -28,7 +28,10 @@ from app.models.contract import (
     msk_now,
 )
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.contract_extract_repository import ContractExtractRepository
 from app.repositories.contract_repository import ContractRepository
+from app.repositories.documents_list_repository import DocumentsListRepository
+from app.repositories.extract_item_repository import ExtractItemRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 
 BASE_CONTRACT_FILES_DIR = "/home/webserver/models/documents"
@@ -40,10 +43,20 @@ class ContractService:
         repo: ContractRepository,
         auth_user_repo: AuthUserRepository | None = None,
         reference_repo: ReferenceObjectRepository | None = None,
+        documents_list_repo: DocumentsListRepository | None = None,
+        department_repo=None,
+        doc_access_service=None,
+        contract_extract_repo: ContractExtractRepository | None = None,
+        extract_item_repo: ExtractItemRepository | None = None,
     ) -> None:
         self.repo = repo
         self.auth_user_repo = auth_user_repo
         self.reference_repo = reference_repo
+        self.documents_list_repo = documents_list_repo
+        self.department_repo = department_repo
+        self.doc_access_service = doc_access_service
+        self.contract_extract_repo = contract_extract_repo
+        self.extract_item_repo = extract_item_repo
 
     # --- helpers ---
 
@@ -77,6 +90,81 @@ class ContractService:
         contract = self.repo.get_contract_by_id(contract_id)
         if not contract:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+
+    def _get_payments_by_contract_ids(self, contract_ids: list[int]) -> dict[int, list[dict]]:
+        result: dict[int, list[dict]] = {cid: [] for cid in contract_ids}
+        if not self.contract_extract_repo or not self.extract_item_repo or not contract_ids:
+            return result
+
+        links = self.contract_extract_repo.get_by_contract_ids(contract_ids)
+        if not links:
+            return result
+
+        extract_ids = list({link.extract_id for link in links})
+        extract_items_by_id = {item.id: item for item in self.extract_item_repo.get_by_ids(extract_ids)}
+
+        for link in links:
+            item = extract_items_by_id.get(link.extract_id)
+            result.setdefault(link.contract_id, []).append(
+                {
+                    "contract_extract_id": link.id,
+                    "extract_id": link.extract_id,
+                    "amount": item.amount if item else None,
+                    "operationDate": item.operationDate if item else None,
+                    "paymentPurpose": item.paymentPurpose if item else None,
+                    "payerName": item.payerName if item else None,
+                    "payeeName": item.payeeName if item else None,
+                }
+            )
+        return result
+
+    # --- Acts: completed work, debt and receivable ---
+
+    @staticmethod
+    def _count_acts(acts: list[dict]) -> list[dict]:
+        """Marks which acts count towards the completed-work sum.
+
+        A КС-2 and a КС-3 (or any acts of different types) for the same work carry the same sum and
+        must be counted once. So for every sum the type that has the most acts with it is counted
+        in full and the acts of other types with that very sum are skipped; several acts of ONE type
+        with equal sums are still separate works and all count. Acts without a sum count nothing."""
+        by_sum: dict[float, dict[int, list[dict]]] = {}
+        for act in acts:
+            if act["sum"]:
+                by_sum.setdefault(round(act["sum"], 2), {}).setdefault(act["act_type_id"], []).append(act)
+
+        counted_ids: set[int] = set()
+        for groups in by_sum.values():
+            # the type with the most acts of this sum; a tie goes to the lowest type id
+            main_type = min(groups, key=lambda t: (-len(groups[t]), t))
+            counted_ids.update(a["id"] for a in groups[main_type])
+
+        return [{**a, "counted": a["id"] in counted_ids} for a in acts]
+
+    def _acts_summary(self, acts: list[dict], paid_sum: float, contract_type: str | None = None) -> dict:
+        marked = self._count_acts(acts)
+        acts_sum = round(float(sum(a["sum"] for a in marked if a["counted"])), 2)
+        paid = round(paid_sum, 2)
+
+        if contract_type == "provider":
+            # Supplier contract: there is no receivable, only debt. Any payment means there is no debt;
+            # acts without any payment mean the whole acts sum is owed.
+            debt_sum = acts_sum if (acts_sum > 0 and paid <= 0) else 0.0
+            receivable_sum = 0.0
+        else:
+            # paid more than the acts show -> debt; the acts exceed the payments -> receivable
+            debt_sum = round(paid - acts_sum, 2) if paid > acts_sum else 0.0
+            receivable_sum = round(acts_sum - paid, 2) if acts_sum > paid else 0.0
+
+        return {
+            # sum of the work done = sum of the counted acts
+            "acts_sum": acts_sum,
+            "acts_count": len(marked),
+            "acts_counted": sum(1 for a in marked if a["counted"]),
+            "debt_sum": debt_sum,
+            "receivable_sum": receivable_sum,
+            "acts": marked,
+        }
 
     # --- ContractWorkType ---
 
@@ -533,7 +621,27 @@ class ContractService:
 
     def get_contracts(self):
         rows = self.repo.get_contracts()
-        return [self._build_contract_response(r, detail=True) for r in rows]
+        payments_by_contract = self._get_payments_by_contract_ids([r.id for r in rows])
+        acts_by_contract = self.repo.get_linked_acts_by_contract_ids([r.id for r in rows])
+        return [
+            self._build_contract_response(
+                r, detail=True, payments=payments_by_contract.get(r.id, []), acts=acts_by_contract.get(r.id, [])
+            )
+            for r in rows
+        ]
+
+    def get_contracts_list(self):
+        rows = self.repo.get_contracts()
+        result = []
+        for row in rows:
+            doc_type_name = None
+            if row.document_type_id:
+                dt = self.repo.get_document_type_by_id(row.document_type_id)
+                if dt:
+                    doc_type_name = dt.name
+            full_name = " ".join(part for part in [doc_type_name, row.name, "№", row.num] if part).strip()
+            result.append({"id": row.id, "full_name": full_name})
+        return result
 
     def get_contract(self, contract_id: int):
         row = self.repo.get_contract_by_id(contract_id)
@@ -543,29 +651,212 @@ class ContractService:
 
     def get_my_contracts(self, user_id: str):
         ids = self.repo.get_contract_ids_by_user(user_id)
+
+        # Добавляем ID на основе document_access_settings
+        if self.doc_access_service and self.department_repo:
+            dept_ids = self.department_repo.get_department_ids_for_user(user_id)
+            extra_ids = self.doc_access_service.get_additional_visible_ids(
+                "contract", user_id, dept_ids,
+                self.repo.get_all_contract_ids,
+                self.repo.get_contract_ids_by_counterparty,
+            )
+            ids = list(set(ids + extra_ids))
+
         if not ids:
             return []
-        ids.sort(reverse=True)
-        rows = [self.repo.get_contract_by_id(cid) for cid in ids]
-        rows = [r for r in rows if r]
-        return [self._build_contract_response(r, detail=True) for r in rows]
 
-    def _build_contract_response(self, row, detail: bool = False):
-        doc_type_name = None
-        if row.document_type_id:
-            dt = self.repo.get_document_type_by_id(row.document_type_id)
-            if dt:
-                doc_type_name = dt.name
+        rows = self.repo.get_contracts_by_ids(ids)
+        rows.sort(key=lambda r: r.id, reverse=True)
 
-        counterparty_ids = {row.customer_id, row.contractor_id}
+        contract_ids = [r.id for r in rows]
+
+        doc_types = self.repo.get_document_types()
+        doc_type_map = {dt.id: dt.name for dt in doc_types}
+
+        counterparty_ids = set()
+        user_ids = set()
+        for r in rows:
+            counterparty_ids.add(r.customer_id)
+            counterparty_ids.add(r.contractor_id)
+            user_ids.add(r.created_by)
+
         counterparty_names = self._get_counterparty_names(list(counterparty_ids))
 
-        user_ids = {row.created_by}
+        parties_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for p in self.repo.get_parties_by_contract_ids(contract_ids):
+            parties_by_contract.setdefault(p.contract_id, []).append(p)
+            counterparty_ids.add(p.counterparties_id)
+            user_ids.add(p.created_by)
+            if p.updated_by:
+                user_ids.add(p.updated_by)
+
+        role_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for role in self.repo.get_user_roles_by_contract_ids(contract_ids):
+            role_by_contract.setdefault(role.contract_id, []).append(role)
+            user_ids.update({role.user_id, role.created_by})
+
+        wc_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for wc in self.repo.get_work_contracts_by_contract_ids(contract_ids):
+            wc_by_contract.setdefault(wc.contract_id, []).append(wc)
+            user_ids.add(wc.created_by)
+
+        object_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for obj in self.repo.get_contract_objects_by_contract_ids(contract_ids):
+            object_by_contract.setdefault(obj.contract_id, []).append(obj)
+
+        status_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for s in self.repo.get_contract_statuses_by_contract_ids(contract_ids):
+            status_by_contract.setdefault(s.contract_id, []).append(s)
+
+        all_counterparty_names = self._get_counterparty_names(list(counterparty_ids))
         users_by_id = self._get_users_map(list(user_ids))
+        work_types_map = {wt.id: wt.name for wt in self.repo.get_work_types()}
+        payments_by_contract = self._get_payments_by_contract_ids(contract_ids)
+        acts_by_contract = self.repo.get_linked_acts_by_contract_ids(contract_ids)
+
+        result = []
+        for r in rows:
+            parties = parties_by_contract[r.id]
+            result.append(
+                self._build_contract_response(
+                    r,
+                    detail=True,
+                    doc_type_map=doc_type_map,
+                    counterparty_names=all_counterparty_names,
+                    users_by_id=users_by_id,
+                    parties=parties,
+                    roles=role_by_contract[r.id],
+                    work_contracts=wc_by_contract[r.id],
+                    statuses=status_by_contract[r.id],
+                    objects=object_by_contract[r.id],
+                    work_types_map=work_types_map,
+                    payments=payments_by_contract.get(r.id, []),
+                    acts=acts_by_contract.get(r.id, []),
+                )
+            )
+        return result
+
+    def get_contracts_by_object(self, object_id: str):
+        level_ids = self.reference_repo.get_level_ids_by_object_ids([object_id]) if self.reference_repo else set()
+        object_ids = [object_id, *level_ids]
+
+        contract_objects = self.repo.get_contract_objects_by_object_ids(object_ids)
+        contract_ids = sorted({obj.contract_id for obj in contract_objects}, reverse=True)
+
+        if not contract_ids:
+            return []
+
+        rows = self.repo.get_contracts_by_ids(contract_ids)
+        rows.sort(key=lambda r: r.id, reverse=True)
+
+        doc_types = self.repo.get_document_types()
+        doc_type_map = {dt.id: dt.name for dt in doc_types}
+
+        counterparty_ids = set()
+        user_ids = set()
+        for r in rows:
+            counterparty_ids.add(r.customer_id)
+            counterparty_ids.add(r.contractor_id)
+            user_ids.add(r.created_by)
+
+        parties_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for p in self.repo.get_parties_by_contract_ids(contract_ids):
+            parties_by_contract.setdefault(p.contract_id, []).append(p)
+            counterparty_ids.add(p.counterparties_id)
+            user_ids.add(p.created_by)
+            if p.updated_by:
+                user_ids.add(p.updated_by)
+
+        role_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for role in self.repo.get_user_roles_by_contract_ids(contract_ids):
+            role_by_contract.setdefault(role.contract_id, []).append(role)
+            user_ids.update({role.user_id, role.created_by})
+
+        wc_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for wc in self.repo.get_work_contracts_by_contract_ids(contract_ids):
+            wc_by_contract.setdefault(wc.contract_id, []).append(wc)
+            user_ids.add(wc.created_by)
+
+        object_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for obj in self.repo.get_contract_objects_by_contract_ids(contract_ids):
+            object_by_contract.setdefault(obj.contract_id, []).append(obj)
+
+        status_by_contract: dict[int, list] = {cid: [] for cid in contract_ids}
+        for s in self.repo.get_contract_statuses_by_contract_ids(contract_ids):
+            status_by_contract.setdefault(s.contract_id, []).append(s)
+
+        all_counterparty_names = self._get_counterparty_names(list(counterparty_ids))
+        users_by_id = self._get_users_map(list(user_ids))
+        work_types_map = {wt.id: wt.name for wt in self.repo.get_work_types()}
+        payments_by_contract = self._get_payments_by_contract_ids(contract_ids)
+        acts_by_contract = self.repo.get_linked_acts_by_contract_ids(contract_ids)
+
+        result = []
+        for r in rows:
+            parties = parties_by_contract[r.id]
+            result.append(
+                self._build_contract_response(
+                    r,
+                    detail=True,
+                    doc_type_map=doc_type_map,
+                    counterparty_names=all_counterparty_names,
+                    users_by_id=users_by_id,
+                    parties=parties,
+                    roles=role_by_contract[r.id],
+                    work_contracts=wc_by_contract[r.id],
+                    statuses=status_by_contract[r.id],
+                    objects=object_by_contract[r.id],
+                    work_types_map=work_types_map,
+                    payments=payments_by_contract.get(r.id, []),
+                    acts=acts_by_contract.get(r.id, []),
+                )
+            )
+        return result
+
+    def _build_contract_response(
+        self,
+        row,
+        detail: bool = False,
+        doc_type_map: dict | None = None,
+        counterparty_names: dict | None = None,
+        users_by_id: dict | None = None,
+        parties: list | None = None,
+        roles: list | None = None,
+        statuses: list | None = None,
+        objects: list | None = None,
+        work_contracts: list | None = None,
+        work_types_map: dict | None = None,
+        payments: list | None = None,
+        acts: list | None = None,
+    ):
+        doc_type_name = None
+        if row.document_type_id:
+            dt_name = doc_type_map.get(row.document_type_id) if doc_type_map is not None else None
+            if dt_name is None:
+                dt = self.repo.get_document_type_by_id(row.document_type_id)
+                if dt:
+                    dt_name = dt.name
+            doc_type_name = dt_name
+
+        if counterparty_names is None:
+            counterparty_names = self._get_counterparty_names([row.customer_id, row.contractor_id])
+
+        base_users_by_id = users_by_id if users_by_id is not None else self._get_users_map([row.created_by])
 
         full_name = " ".join(part for part in [doc_type_name, row.name, "№", row.num] if part).strip()
 
-        statuses = [self._serialize_contract_status(s) for s in self.repo.get_contract_statuses(contract_id=row.id)]
+        if statuses is None:
+            statuses = [self._serialize_contract_status(s) for s in self.repo.get_contract_statuses(contract_id=row.id)]
+        else:
+            statuses = [self._serialize_contract_status(s) for s in statuses]
+
+        current_payments = payments if payments is not None else self._get_payments_by_contract_ids([row.id]).get(row.id, [])
+        paid_sum = sum(float(p["amount"]) for p in current_payments if p.get("amount") is not None)
+        contract_sum = float(row.sum) if row.sum is not None else None
+        remaining_sum = (contract_sum - paid_sum) if contract_sum is not None else None
+        paid_label = f"{paid_sum} из {contract_sum}" if contract_sum is not None else None
+        current_acts = acts if acts is not None else self.repo.get_linked_acts_by_contract_ids([row.id]).get(row.id, [])
+        acts_summary = self._acts_summary(current_acts, paid_sum, row.type)
 
         result = {
             "id": row.id,
@@ -585,65 +876,100 @@ class ContractService:
             "contractor_name": counterparty_names.get(row.contractor_id),
             "type": row.type,
             "sum": row.sum,
+            "paid_sum": paid_sum,
+            "remaining_sum": remaining_sum,
+            "paid_label": paid_label,
+            "acts_sum": acts_summary["acts_sum"],
+            "acts_count": acts_summary["acts_count"],
+            "acts_counted": acts_summary["acts_counted"],
+            "debt_sum": acts_summary["debt_sum"],
+            "receivable_sum": acts_summary["receivable_sum"],
+            "acts": acts_summary["acts"],
+            "payments": current_payments,
             "comment": row.comment,
             "statuses": statuses,
             "created_at": row.created_at,
             "updated_at": row.updated_at,
             "created_by": row.created_by,
-            "created_by_user": self._map_user(users_by_id.get(row.created_by)),
+            "created_by_user": self._map_user(base_users_by_id.get(row.created_by)),
         }
 
         if detail:
-            parties = self.repo.get_parties(contract_id=row.id)
-            party_counterparty_ids = {p.counterparties_id for p in parties}
-            all_counterparty_ids = counterparty_ids | party_counterparty_ids
-            all_counterparty_names = self._get_counterparty_names(list(all_counterparty_ids))
+            current_parties = parties if parties is not None else self.repo.get_parties(contract_id=row.id)
 
-            party_user_ids = {p.created_by for p in parties} | {p.updated_by for p in parties if p.updated_by}
-            all_user_ids = user_ids | party_user_ids
+            all_counterparty_ids = {row.customer_id, row.contractor_id}
+            for p in current_parties:
+                all_counterparty_ids.add(p.counterparties_id)
+            if counterparty_names is None:
+                all_counterparty_names = self._get_counterparty_names(list(all_counterparty_ids))
+            else:
+                all_counterparty_names = counterparty_names
 
-            for role in self.repo.get_user_roles(contract_id=row.id):
-                all_user_ids.add(role.user_id)
-                all_user_ids.add(role.created_by)
+            current_roles = roles if roles is not None else self.repo.get_user_roles(contract_id=row.id)
+            current_work_contracts = (
+                work_contracts if work_contracts is not None else self.repo.get_work_contracts(contract_id=row.id)
+            )
 
-            for wc in self.repo.get_work_contracts(contract_id=row.id):
+            all_user_ids = {row.created_by}
+            for p in current_parties:
+                all_user_ids.add(p.created_by)
+                if p.updated_by:
+                    all_user_ids.add(p.updated_by)
+            for role in current_roles:
+                all_user_ids.update({role.user_id, role.created_by})
+            for wc in current_work_contracts:
                 all_user_ids.add(wc.created_by)
 
-            users_by_id = self._get_users_map(list(all_user_ids))
-            work_types_map = {}
-            for wt in self.repo.get_work_types():
-                work_types_map[wt.id] = wt.name
+            current_users = users_by_id if users_by_id is not None else self._get_users_map(list(all_user_ids))
+            if work_types_map is None:
+                current_work_types_map = {wt.id: wt.name for wt in self.repo.get_work_types()}
+            else:
+                current_work_types_map = work_types_map
 
-            result["created_by_user"] = self._map_user(users_by_id.get(row.created_by))
+            result["created_by_user"] = self._map_user(current_users.get(row.created_by))
 
             result["parties"] = [
-                self._serialize_party(p, all_counterparty_names, users_by_id) for p in parties
+                self._serialize_party(p, all_counterparty_names, current_users) for p in current_parties
             ]
             result["user_roles"] = [
-                self._serialize_user_role(r, users_by_id) for r in self.repo.get_user_roles(contract_id=row.id)
+                self._serialize_user_role(r, current_users) for r in current_roles
             ]
             result["work_types"] = [
-                self._serialize_work_contract(wc, work_types_map, users_by_id) for wc in self.repo.get_work_contracts(contract_id=row.id)
+                self._serialize_work_contract(wc, current_work_types_map, current_users) for wc in current_work_contracts
             ]
+            current_objects = objects if objects is not None else self.repo.get_contract_objects(contract_id=row.id)
             result["objects"] = [
-                self._serialize_contract_object(o) for o in self.repo.get_contract_objects(contract_id=row.id)
+                self._serialize_contract_object(o) for o in current_objects
             ]
 
         return result
 
     def create_contract(self, payload: ContractCreate, created_by: str):
         data = payload.model_dump(exclude_unset=True)
+        data.pop("objects", None)
+        objects = [o.model_dump() for o in payload.objects]  # object_type keeps its default "object"
         data["created_by"] = created_by
 
         contractor_internal = self.reference_repo and self.reference_repo.is_counterparty_internal(data.get("contractor_id", ""))
         customer_internal = self.reference_repo and self.reference_repo.is_counterparty_internal(data.get("customer_id", ""))
 
+        contract_year = data.get("date").year if data.get("date") else None
+
         if contractor_internal:
             data["type"] = "buyer"
-            data["internal_num"] = self.repo.count_contracts_by_internal_party(data["contractor_id"], "contractor") + 1
+            data["internal_num"] = str(self.repo.count_contracts_by_internal_party(data["contractor_id"], "contractor", "buyer", contract_year) + 1)
         elif customer_internal:
             data["type"] = "provider"
-            data["internal_num"] = self.repo.count_contracts_by_internal_party(data["customer_id"], "customer") + 1
+            data["internal_num"] = str(self.repo.count_contracts_by_internal_party(data["customer_id"], "customer", "provider", contract_year) + 1)
+
+        if "type" not in data:
+            if payload.type:
+                data["type"] = payload.type
+            else:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Contract type is required when neither party is internal",
+                )
 
         created = self.repo.create_contract(data)
         doc_type_name = None
@@ -653,7 +979,19 @@ class ContractService:
                 doc_type_name = dt.name
         log_msg = f"создал договор {doc_type_name or ''} {created.name or ''} № {created.num or ''}".strip()
         self.repo.create_log(created.id, "contract", log_msg, created_by)
-        return self._build_contract_response(created)
+        seen = set()
+        for obj in objects:  # several objects can be given right in the create request
+            key = (obj["object_id"], obj["object_type"])
+            if key in seen:
+                continue
+            seen.add(key)
+            added = self.repo.create_contract_object({"contract_id": created.id, **obj})
+            object_name = self._resolve_object_name(added)
+            self.repo.create_log(created.id, "contract", f"добавил объект {object_name or added.object_id}", created_by)
+        if seen:
+            self._sync_information_status(created.id, created_by)
+        # with objects in the request the full view (which lists them) is returned
+        return self._build_contract_response(created, detail=bool(seen))
 
     def update_contract(self, contract_id: int, payload: ContractUpdate, user_id: str):
         row = self.repo.get_contract_by_id(contract_id)
@@ -986,6 +1324,8 @@ class ContractService:
         updated = self.repo.save_file(row)
         if "original_name" in data and data["original_name"] != old_name:
             self.repo.create_log(updated.contract_id, "contract", f"изменил название файла с {old_name} на {data['original_name']}", user_id)
+            if self.documents_list_repo:
+                self.documents_list_repo.rename_by_linked_file_id(updated.id, data["original_name"])
         return self._serialize_file(updated)
 
     def delete_file(self, file_id: str, user_id: str):
@@ -997,6 +1337,8 @@ class ContractService:
         if row.file_path and os.path.exists(row.file_path):
             os.remove(row.file_path)
         self.repo.delete_file(row)
+        if self.documents_list_repo:
+            self.documents_list_repo.unlink_by_linked_file_id(file_id)
         self.repo.create_log(contract_id, "contract", f"удалил файл {original_name}", user_id)
 
     @staticmethod

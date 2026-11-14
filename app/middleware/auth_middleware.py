@@ -1,12 +1,16 @@
-from fastapi import Cookie, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
 
-from app.database import get_auth_db
+from app.database import get_auth_db, tenant_cookie_name
 from app.repositories.session_repository import SessionRepository
 
 
+def get_session_token(request: Request) -> str | None:
+    return request.cookies.get(tenant_cookie_name())
+
+
 def get_session(
-    session_token: str | None = Cookie(default=None, alias="session"),
+    session_token: str | None = Depends(get_session_token),
     db: Session = Depends(get_auth_db),
 ):
     if not session_token:

@@ -2,9 +2,12 @@ from app.database import msk_now
 import uuid
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from app.models.invoice import Invoice, InvoiceItem, InvoiceLog, InvoicePayment
+from app.models.extract_item import ExtractItem
+from app.models.invoice import Invoice, InvoiceFile, InvoiceItem, InvoiceLog, InvoicePayment
+from app.models.invoice_payment_extract import InvoicePaymentExtract
 from app.models.item_mapping import ItemMapping
 from app.models.supply_request import StatusRef, SupplyRequest, UnitRef
 
@@ -26,10 +29,32 @@ class InvoiceRepository:
     def get_invoices(self) -> list[Invoice]:
         return self.db.query(Invoice).order_by(Invoice.id.desc()).all()
 
+    def find_invoices_by_ref(
+        self,
+        nums: list[str],
+        invoice_date,
+        provider_id: str,
+        payer_id: str,
+    ) -> list[Invoice]:
+        lowered = [n.strip().lower() for n in nums if n and n.strip()]
+        if not lowered:
+            return []
+        return (
+            self.db.query(Invoice)
+            .filter(
+                func.lower(func.trim(Invoice.num)).in_(lowered),
+                Invoice.date == invoice_date,
+                Invoice.provider_id == provider_id,
+                Invoice.payer_id == payer_id,
+            )
+            .order_by(Invoice.id.desc())
+            .all()
+        )
+
     def get_invoices_by_ids(self, invoice_ids: list[int]) -> list[Invoice]:
         if not invoice_ids:
             return []
-        return self.db.query(Invoice).filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.id.desc()).all()
+        return self.db.query(Invoice).filter(Invoice.id.in_(invoice_ids)).order_by(Invoice.created_at.desc()).all()
 
     def save_invoice(self, row: Invoice) -> Invoice:
         row.updated_at = msk_now()
@@ -47,6 +72,20 @@ class InvoiceRepository:
             .filter(InvoiceItem.invoice_id == invoice_id)
             .all()
         )
+
+    def get_invoice_items_by_invoice_ids(self, invoice_ids: list[int]) -> dict[int, list[InvoiceItem]]:
+        from collections import defaultdict
+        if not invoice_ids:
+            return {}
+        rows = (
+            self.db.query(InvoiceItem)
+            .filter(InvoiceItem.invoice_id.in_(invoice_ids))
+            .all()
+        )
+        result = defaultdict(list)
+        for row in rows:
+            result[row.invoice_id].append(row)
+        return dict(result)
 
     def get_chat_ids_by_invoice(self, invoice_ids: list[int]) -> dict[int, int]:
         from app.models.chat import Chat
@@ -185,6 +224,33 @@ class InvoiceRepository:
             .order_by(InvoiceLog.id.asc())
             .all()
         )
+
+    def get_extract_links_by_payment_ids(self, payment_ids: list[str]) -> dict[str, list[dict]]:
+        """payment_id -> bank-statement rows linked to it (invoice_payment_extracts). A payment
+        normally has zero or one, but manual links can attach more, so it's always a list."""
+        if not payment_ids:
+            return {}
+        rows = (
+            self.db.query(InvoicePaymentExtract, ExtractItem)
+            .join(ExtractItem, ExtractItem.id == InvoicePaymentExtract.extract_id)
+            .filter(InvoicePaymentExtract.invoice_payment_id.in_(payment_ids))
+            .order_by(InvoicePaymentExtract.created_at.asc())
+            .all()
+        )
+        result: dict[str, list[dict]] = {}
+        for link, item in rows:
+            result.setdefault(link.invoice_payment_id, []).append(
+                {
+                    "link_id": link.id,
+                    "extract_id": link.extract_id,
+                    "scenario": link.scenario,
+                    "amount": link.amount,
+                    "operation_date": item.operationDate,
+                    "bank_type": item.bank_type,
+                    "account_number": item.account_number,
+                }
+            )
+        return result
 
     def get_invoice_payments(self, invoice_id: int) -> list[InvoicePayment]:
         return (
@@ -386,3 +452,37 @@ class InvoiceRepository:
             "attention": attention,
             "total": total,
         }
+
+    # --- InvoiceFiles ---
+
+    def get_invoice_files(self, invoice_id: int) -> list[InvoiceFile]:
+        return (
+            self.db.query(InvoiceFile)
+            .filter(InvoiceFile.invoice_id == invoice_id)
+            .order_by(InvoiceFile.id)
+            .all()
+        )
+
+    def get_invoice_files_by_invoice_ids(self, invoice_ids: list[int]) -> list[InvoiceFile]:
+        if not invoice_ids:
+            return []
+        return (
+            self.db.query(InvoiceFile)
+            .filter(InvoiceFile.invoice_id.in_(invoice_ids))
+            .order_by(InvoiceFile.id)
+            .all()
+        )
+
+    def get_invoice_file_by_id(self, invoice_file_id: str) -> InvoiceFile | None:
+        return self.db.query(InvoiceFile).filter(InvoiceFile.id == invoice_file_id).first()
+
+    def create_invoice_file(self, data: dict) -> InvoiceFile:
+        row = InvoiceFile(id=str(uuid.uuid4()), **data)
+        self.db.add(row)
+        self.db.commit()
+        self.db.refresh(row)
+        return row
+
+    def delete_invoice_file(self, row: InvoiceFile) -> None:
+        self.db.delete(row)
+        self.db.commit()

@@ -11,6 +11,7 @@ def msk_now():
     return datetime.utcnow() + timedelta(hours=3)
 
 from app.database import SupplyBase
+from app.models.object_ref import ObjectRef
 
 
 class Contract(SupplyBase):
@@ -227,6 +228,10 @@ class ContractCreate(BaseModel):
     type: Literal["provider", "buyer"] | None = Field(default=None)
     sum: float | None = Field(default=None)
     comment: str | None = Field(default=None)
+    objects: list[ObjectRef] = Field(
+        default_factory=list,
+        description="Объекты договора, добавляются сразу при создании (по одному можно добавлять и через /contract-objects)",
+    )
 
 
 class ContractUpdate(BaseModel):

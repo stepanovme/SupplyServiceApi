@@ -337,6 +337,44 @@ class TaskRepository:
         self.db.delete(row)
         self.db.commit()
 
+    def get_task_ids_by_accomplishment_status(self, user_id: str, status: str) -> list[str]:
+        q = self.db.query(TaskAccomplishment.task_id).filter(
+            TaskAccomplishment.created_by == user_id,
+        )
+        if status == "in_progress":
+            q = q.filter(
+                TaskAccomplishment.date_start.isnot(None),
+                TaskAccomplishment.date_end.is_(None),
+                TaskAccomplishment.date_stop.is_(None),
+            )
+        elif status == "stopped":
+            q = q.filter(TaskAccomplishment.date_stop.isnot(None))
+        elif status == "assigned_in_progress":
+            return self.get_my_created_task_ids_with_active_accomplishments(user_id)
+        else:
+            return []
+        rows = q.all()
+        return list({row[0] for row in rows if row[0] is not None})
+
+    def get_my_created_task_ids_with_active_accomplishments(self, user_id: str) -> list[str]:
+        rows = (
+            self.db.query(Task.id)
+            .filter(Task.created_by == user_id)
+            .filter(
+                self.db.query(TaskAccomplishment.task_id)
+                .filter(
+                    TaskAccomplishment.task_id == Task.id,
+                    TaskAccomplishment.date_start.isnot(None),
+                    TaskAccomplishment.date_end.is_(None),
+                    TaskAccomplishment.date_stop.is_(None),
+                    TaskAccomplishment.created_by != user_id,
+                )
+                .exists()
+            )
+            .all()
+        )
+        return [row[0] for row in rows if row[0] is not None]
+
     # --- TaskTag ---
 
     def get_tags(self, task_id: str | None = None) -> list[TaskTag]:

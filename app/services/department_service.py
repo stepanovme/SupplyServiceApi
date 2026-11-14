@@ -24,6 +24,8 @@ class DepartmentService:
         return [self._serialize(r) for r in self.repo.get_all()]
 
     def get_my(self, user_id: str) -> list[dict]:
+        if self.auth_user_repo and self.auth_user_repo.has_role(user_id, "697afdbf-4f2e-47fb-8277-7127b9b85317"):
+            return [self._serialize(r) for r in self.repo.get_all()]
         return [self._serialize(r) for r in self.repo.get_by_user(user_id)]
 
     def get_by_id(self, dept_id: int) -> dict:
@@ -92,14 +94,16 @@ class DepartmentService:
         if not user:
             return None
         surname = getattr(user, "surname", "") or ""
-        name = getattr(user, "name", "") or ""
-        patronymic = getattr(user, "patronymic", "") or ""
-        short_fio = f"{surname} {name[0]}.{patronymic[0]}." if surname and name else (surname or name or "")
+        name_val = getattr(user, "name", "") or ""
+        patronymic_val = getattr(user, "patronymic", "") or ""
+        name_initial = f"{name_val[0]}." if name_val else ""
+        patronymic_initial = f"{patronymic_val[0]}." if patronymic_val else ""
+        short_fio = " ".join(part for part in [surname, name_initial, patronymic_initial] if part).strip()
         return {
             "id": user.id,
             "surname": surname,
-            "name": name,
-            "patronymic": patronymic,
+            "name": name_val,
+            "patronymic": patronymic_val,
             "short_fio": short_fio,
         }
 
@@ -111,6 +115,9 @@ class DepartmentService:
 
     def _serialize(self, row: Department) -> dict:
         users_by_id = self._get_users_map([row.created_by, row.updated_by] if row.updated_by else [row.created_by])
+        department_users = self.repo.get_users_by_department(row.id)
+        dept_user_ids = [du.user_id for du in department_users if du.user_id]
+        dept_users_by_id = self._get_users_map(dept_user_ids)
         return {
             "id": row.id,
             "name": row.name,
@@ -120,6 +127,16 @@ class DepartmentService:
             "updated_at": row.updated_at,
             "updated_by": row.updated_by,
             "updated_by_user": self._map_user(users_by_id.get(row.updated_by)) if row.updated_by else None,
+            "users": [
+                {
+                    "id": du.id,
+                    "user_id": du.user_id,
+                    "user": self._map_user(dept_users_by_id.get(du.user_id)),
+                    "role_id": du.role_id,
+                    "created_at": du.created_at,
+                }
+                for du in department_users
+            ],
         }
 
     def _serialize_user(self, row: DepartmentUser) -> dict:

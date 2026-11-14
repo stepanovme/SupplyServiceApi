@@ -4,7 +4,7 @@ from datetime import date as dt_date
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import CHAR, Column, Date, DateTime, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
@@ -22,13 +22,13 @@ class Delivery(SupplyBase):
     pick_up_date_planned = Column(Date, nullable=True)
     planned_delivery_from = Column(DateTime, nullable=True)
     planned_delivery_to = Column(DateTime, nullable=True)
-    delivery_from = Column(CHAR(36), nullable=False, index=True)
+    delivery_from = Column(Text, nullable=True)
     delivery_from_type = Column(String(20), nullable=True)
     delivery_to = Column(CHAR(36), nullable=False, index=True)
     delivery_to_type = Column(String(20), nullable=True)
-    driver_id = Column(CHAR(36), nullable=False, index=True)
+    driver_id = Column(CHAR(36), nullable=True, index=True)
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=False, index=True)
-    comment = Column(Text, nullable=False)
+    comment = Column(Text, nullable=True)
     created_at = Column(DateTime, nullable=False, default=msk_now)
     created_by = Column(CHAR(36), nullable=False, index=True)
 
@@ -58,12 +58,19 @@ class DeliveryCreate(BaseModel):
     planned_delivery_from: datetime | None = Field(default=None)
     planned_delivery_to: datetime | None = Field(default=None)
     delivery_from: str | None = Field(default=None)
-    delivery_from_type: Literal["company", "warehouse", "object"] | None = Field(default=None)
+    delivery_from_type: Literal["company", "warehouse", "object", "text"] | None = Field(default=None)
     delivery_to: str | None = Field(default=None)
     delivery_to_type: Literal["company", "warehouse", "object"] | None = Field(default=None)
     driver_id: str | None = Field(default=None)
     status_id: str | None = Field(default=None)
     comment: str | None = Field(default=None)
+
+    @field_validator("pick_up_date", "pick_up_date_planned", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class DeliveryUpdate(BaseModel):
@@ -76,12 +83,19 @@ class DeliveryUpdate(BaseModel):
     planned_delivery_from: datetime | None = Field(default=None)
     planned_delivery_to: datetime | None = Field(default=None)
     delivery_from: str | None = Field(default=None)
-    delivery_from_type: Literal["company", "warehouse", "object"] | None = Field(default=None)
+    delivery_from_type: Literal["company", "warehouse", "object", "text"] | None = Field(default=None)
     delivery_to: str | None = Field(default=None)
     delivery_to_type: Literal["company", "warehouse", "object"] | None = Field(default=None)
     driver_id: str | None = Field(default=None)
     status_id: str | None = Field(default=None)
     comment: str | None = Field(default=None)
+
+    @field_validator("pick_up_date", "pick_up_date_planned", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v == "":
+            return None
+        return v
 
 
 class DeliveryItemCreate(BaseModel):

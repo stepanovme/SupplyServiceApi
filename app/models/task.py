@@ -278,3 +278,45 @@ class TaskAccomplishmentUpdate(BaseModel):
     date_end: datetime | None = Field(default=None)
     status_id: str | None = Field(default=None)
     date_stop: datetime | None = Field(default=None)
+
+
+class TaskBoardNotification(SupplyBase):
+    __tablename__ = "task_board_notification"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_board_id = Column(CHAR(36), nullable=False, index=True)
+    task_boards_column_id = Column(CHAR(36), nullable=True, index=True)
+    user_id = Column(CHAR(36), nullable=False, index=True)
+    expaired_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
+
+
+class TaskBoardNotificationCreate(BaseModel):
+    task_board_id: str
+    task_boards_column_id: str | None = Field(default=None)
+    user_id: str
+    expaired_at: datetime | None = Field(default=None)
+
+
+class TaskBoardNotificationUpdate(BaseModel):
+    task_boards_column_id: str | None = Field(default=None)
+    expaired_at: datetime | None = Field(default=None)
+
+
+class TaskBoardNote(SupplyBase):
+    __tablename__ = "task_board_notes"
+
+    id = Column(CHAR(36), primary_key=True)
+    task_board_id = Column(CHAR(36), nullable=False, index=True)
+    note = Column(Text, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=msk_now)
+    created_by = Column(CHAR(36), nullable=False, index=True)
+
+
+class TaskBoardNoteCreate(BaseModel):
+    task_board_id: str
+    note: str
+
+
+class TaskBoardNoteUpdate(BaseModel):
+    note: str

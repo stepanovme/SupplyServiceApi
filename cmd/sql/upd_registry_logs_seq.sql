@@ -1,0 +1,1 @@
+ALTER TABLE `upd_registry_logs` ADD COLUMN `seq` bigint NOT NULL AUTO_INCREMENT UNIQUE;

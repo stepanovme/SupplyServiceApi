@@ -3,7 +3,9 @@ from datetime import date as dt_date
 from datetime import datetime, timedelta
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from typing import Literal
+
+from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import CHAR, Boolean, Column, Date, DateTime, Enum, Float, ForeignKey, Integer, String, Text
 
 from app.database import SupplyBase
@@ -25,6 +27,12 @@ class Invoice(SupplyBase):
     due_days = Column(Integer, nullable=False, default=0)
     valid_until = Column(Integer, nullable=False, default=0)
     is_urgent = Column(Boolean, nullable=False, default=False)
+    closing_docs_not_required = Column(Boolean, nullable=False, default=False)
+    closing_docs_not_required_at = Column(DateTime, nullable=True)
+    closing_docs_not_required_by = Column(String(36), nullable=True)
+    delivery_not_required = Column(Boolean, nullable=False, default=False)
+    delivery_not_required_at = Column(DateTime, nullable=True)
+    delivery_not_required_by = Column(String(36), nullable=True)
     total_amount = Column(Float, nullable=False, default=0)
     vat_rate = Column(Integer, nullable=False, default=0)
     vat_amount = Column(Float, nullable=False, default=0)
@@ -35,6 +43,16 @@ class Invoice(SupplyBase):
     updated_at = Column(DateTime, nullable=True)
     created_by = Column(CHAR(36), nullable=False)
     comment = Column(Text, nullable=True)
+    type = Column(Enum("incoming", "outgoing", name="invoice_type_enum"), nullable=False, default="incoming")
+    privacy = Column(Enum("private", "public", name="invoice_privacy_enum"), nullable=False, default="public")
+    # recipient (payee) requisites, all optional
+    recipient_inn = Column(String(12), nullable=True)
+    recipient_kpp = Column(String(9), nullable=True)
+    recipient_bank_name = Column(String(255), nullable=True)
+    recipient_account = Column(String(20), nullable=True)
+    recipient_corr_account = Column(String(20), nullable=True)
+    recipient_bik = Column(String(9), nullable=True)
+    payment_purpose = Column(Text, nullable=True)
 
 
 class InvoiceItem(SupplyBase):
@@ -51,6 +69,8 @@ class InvoiceItem(SupplyBase):
     value_nds = Column(Integer, nullable=True)
     unit_id = Column(CHAR(36), nullable=True)
     converted_quantity = Column(Float, nullable=True)
+    type = Column(Enum("tax", "product", "service", "delivery", "equipment", name="invoice_item_type_enum"), nullable=True)
+    num = Column(Integer, nullable=True)
 
 
 class InvoiceLog(SupplyBase):
@@ -102,6 +122,15 @@ class InvoiceCreate(BaseModel):
     object_type: str | None = Field(default=None)
     status: str | None = Field(default=None)
     comment: str | None = Field(default=None)
+    type: str | None = Field(default=None)
+    privacy: Literal["private", "public"] | None = Field(default=None)
+    recipient_inn: str | None = Field(default=None, description="ИНН получателя (10 или 12 цифр)")
+    recipient_kpp: str | None = Field(default=None, description="КПП получателя (9 символов)")
+    recipient_bank_name: str | None = Field(default=None, description="Банк получателя")
+    recipient_account: str | None = Field(default=None, description="Р/С получателя (20 символов)")
+    recipient_corr_account: str | None = Field(default=None, description="К/С банка получателя (20 символов)")
+    recipient_bik: str | None = Field(default=None, description="БИК банка получателя (9 цифр)")
+    payment_purpose: str | None = Field(default=None, description="Назначение платежа")
 
 
 class InvoiceUpdate(BaseModel):
@@ -124,6 +153,15 @@ class InvoiceUpdate(BaseModel):
     object_type: str | None = Field(default=None)
     status: str | None = Field(default=None)
     comment: str | None = Field(default=None)
+    type: str | None = Field(default=None)
+    privacy: Literal["private", "public"] | None = Field(default=None)
+    recipient_inn: str | None = Field(default=None, description="ИНН получателя (10 или 12 цифр)")
+    recipient_kpp: str | None = Field(default=None, description="КПП получателя (9 символов)")
+    recipient_bank_name: str | None = Field(default=None, description="Банк получателя")
+    recipient_account: str | None = Field(default=None, description="Р/С получателя (20 символов)")
+    recipient_corr_account: str | None = Field(default=None, description="К/С банка получателя (20 символов)")
+    recipient_bik: str | None = Field(default=None, description="БИК банка получателя (9 цифр)")
+    payment_purpose: str | None = Field(default=None, description="Назначение платежа")
 
 
 class InvoiceItemCreate(BaseModel):
@@ -136,6 +174,8 @@ class InvoiceItemCreate(BaseModel):
     value_nds: int | None = Field(default=None)
     unit_id: str | None = Field(default=None)
     converted_quantity: float | None = Field(default=None)
+    type: Literal["tax", "product", "service", "delivery", "equipment"] | None = Field(default=None)
+    num: int | None = Field(default=None)
 
 
 class InvoiceItemUpdate(BaseModel):
@@ -148,6 +188,8 @@ class InvoiceItemUpdate(BaseModel):
     value_nds: int | None = Field(default=None)
     unit_id: str | None = Field(default=None)
     converted_quantity: float | None = Field(default=None)
+    type: Literal["tax", "product", "service", "delivery", "equipment"] | None = Field(default=None)
+    num: int | None = Field(default=None)
 
 
 class InvoiceParseRequest(BaseModel):
@@ -195,3 +237,26 @@ class InvoicePaymentUpdate(BaseModel):
     paid_at: datetime | None = Field(default=None)
     file_id: str | None = Field(default=None)
     priority: int | None = Field(default=None)
+
+    @field_validator("date_plan", mode="before")
+    @classmethod
+    def parse_date_plan(cls, v):
+        if isinstance(v, str) and "T" in v:
+            return datetime.fromisoformat(v).date()
+        return v
+
+
+class InvoiceFile(SupplyBase):
+    __tablename__ = "invoice_files"
+
+    id = Column(CHAR(36), primary_key=True)
+    invoice_id = Column(Integer, nullable=False, index=True)
+    file_id = Column(CHAR(36), nullable=False, index=True)
+
+
+class InvoiceDeliveryMark(BaseModel):
+    not_required: bool
+
+
+class InvoiceClosingDocsMark(BaseModel):
+    not_required: bool

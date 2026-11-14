@@ -6,7 +6,10 @@ from pathlib import Path
 from fastapi import HTTPException, status
 
 from app.models.request_file import FileAudit, FileDB, NomenclatureFile, RequestFile
+from app.repositories.project_user_role_repository import ProjectUserRoleRepository
 from app.repositories.request_file_repository import RequestFileRepository
+from app.repositories.request_repository import RequestRepository
+from app.services.ws_manager import ws_manager
 
 BASE_REQUEST_FILES_DIR = os.getenv(
     "SUPPLY_REQUEST_FILES_DIR",
@@ -20,8 +23,15 @@ BASE_NOMENCLATURE_FILES_DIR = os.getenv(
 
 
 class RequestFileService:
-    def __init__(self, repo: RequestFileRepository) -> None:
+    def __init__(
+        self,
+        repo: RequestFileRepository,
+        request_repo: RequestRepository | None = None,
+        project_user_role_repo: ProjectUserRoleRepository | None = None,
+    ) -> None:
         self.repo = repo
+        self.request_repo = request_repo
+        self.project_user_role_repo = project_user_role_repo
 
     def upload_request_attachment(
         self,
@@ -110,6 +120,13 @@ class RequestFileService:
                     user_id=user_id,
                 )
             )
+            if self.request_repo:
+                self.request_repo.create_event_log(
+                    request_id=request_id,
+                    user_id=user_id,
+                    event_type="file_attached",
+                    description=f"Прикреплён файл: {original_name}",
+                )
         except Exception:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -418,10 +435,19 @@ class RequestFileService:
                     user_id=user_id,
                 )
             )
+            if self.request_repo:
+                self.request_repo.create_event_log(
+                    request_id=request_id,
+                    user_id=user_id,
+                    event_type="file_attached",
+                    description=f"Прикреплён файл счёта: {original_name}",
+                )
         except Exception:
             if os.path.exists(file_path):
                 os.remove(file_path)
             raise
+
+        self._notify_invoice_attached(request_id, user_id, created.original_name)
 
         return {
             "id": created.id,
@@ -433,6 +459,29 @@ class RequestFileService:
             "file_path": created.file_path,
             "link_type": "invoice",
         }
+
+    def _notify_invoice_attached(self, request_id: int, attached_by: str, original_name: str) -> None:
+        if not self.request_repo or not self.project_user_role_repo:
+            return
+        request_row = self.request_repo.get_model_by_id(request_id)
+        if not request_row or not request_row.object_levels_id:
+            return
+        role_rows = self.project_user_role_repo.get_by_object_levels_id(request_row.object_levels_id)
+        user_ids = {
+            role_row.user_id for role_row in role_rows if role_row.user_id and role_row.user_id != attached_by
+        }
+        if not user_ids:
+            return
+        request_payload = {
+            "id": request_row.id,
+            "name": request_row.name,
+            "status": None,
+        }
+        ws_manager.send_request_invoice_attached(
+            list(user_ids),
+            request_payload,
+            {"file_name": original_name, "attached_by": attached_by},
+        )
 
     def get_request_invoice_files(self, request_id: int):
         if not self.repo.request_exists(request_id):
@@ -513,6 +562,7 @@ class RequestFileService:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
         _, file_row, _ = row
+        original_name = file_row.original_name
         self.repo.mark_file_deleted(file_row)
         self.repo.add_audit(
             FileAudit(
@@ -523,7 +573,54 @@ class RequestFileService:
             )
         )
 
+        if self.request_repo:
+            self.request_repo.create_event_log(
+                request_id=request_id,
+                user_id=user_id,
+                event_type="file_detached",
+                description=f"Удалён файл: {original_name}",
+            )
+
         if os.path.exists(file_row.file_path):
             os.remove(file_row.file_path)
 
         return None
+
+    PREVIEW_EXTENSIONS = {".docx", ".doc", ".xls", ".xlsx", ".pptx"}
+
+    def get_preview(self, file_id: str) -> str:
+        import subprocess
+
+        file_row = self.repo.get_file_by_id(file_id)
+        if not file_row:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
+        if not file_row.file_path or not os.path.exists(file_row.file_path):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found on disk")
+
+        ext = Path(file_row.file_path).suffix.lower()
+        if ext == ".pdf":
+            return file_row.file_path
+
+        if ext not in self.PREVIEW_EXTENSIONS:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Preview not supported for this file type")
+
+        cached = Path(file_row.file_path).parent / f"{Path(file_row.file_path).name}.preview.pdf"
+        if cached.exists():
+            return str(cached)
+
+        result = subprocess.run(
+            ["libreoffice", "--headless", "--convert-to", "pdf", "--outdir", str(cached.parent), file_row.file_path],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode != 0:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Conversion failed: {result.stderr.strip()}")
+
+        output_name = f"{Path(file_row.file_path).stem}.pdf"
+        output_path = cached.parent / output_name
+        if output_path.exists():
+            os.rename(str(output_path), str(cached))
+
+        if not cached.exists():
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Conversion produced no output")
+
+        return str(cached)

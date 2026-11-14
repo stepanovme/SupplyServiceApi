@@ -32,6 +32,8 @@ class WarehouseReceipt(SupplyBase):
     status_id = Column(CHAR(36), ForeignKey("status.id"), nullable=False, index=True)
     upd_documents_id = Column(CHAR(36), ForeignKey("upd_documents.id"), nullable=True, index=True)
     retail = Column(Boolean, nullable=True, default=False)
+    warehouse_transfer_id = Column(CHAR(36), nullable=True, index=True)
+    deal_id = Column(CHAR(36), nullable=True, index=True)
 
 
 class WarehouseReceiptItem(SupplyBase):
@@ -116,6 +118,8 @@ class WarehouseReceiptCreate(BaseModel):
     status_id: str | None = Field(default=None)
     upd_documents_id: str | None = Field(default=None)
     retail: bool | None = Field(default=False)
+    warehouse_transfer_id: str | None = Field(default=None)
+    deal_id: str | None = Field(default=None)
 
 
 class WarehouseReceiptUpdate(BaseModel):
@@ -139,6 +143,8 @@ class WarehouseReceiptUpdate(BaseModel):
     status_id: str | None = Field(default=None)
     upd_documents_id: str | None = Field(default=None)
     retail: bool | None = Field(default=None)
+    warehouse_transfer_id: str | None = Field(default=None)
+    deal_id: str | None = Field(default=None)
 
 
 class WarehouseReceiptItemCreate(BaseModel):

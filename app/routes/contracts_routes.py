@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
 
 from app.database import DbAuthSession, DbReferenceSession, DbSupplySession
@@ -26,9 +26,15 @@ from app.models.contract import (
     WorkContractCreate,
 )
 from app.repositories.auth_user_repository import AuthUserRepository
+from app.repositories.contract_extract_repository import ContractExtractRepository
 from app.repositories.contract_repository import ContractRepository
+from app.repositories.extract_item_repository import ExtractItemRepository
+from app.repositories.department_repository import DepartmentRepository
+from app.repositories.document_access_setting_repository import DocumentAccessSettingRepository
+from app.repositories.documents_list_repository import DocumentsListRepository
 from app.repositories.reference_object_repository import ReferenceObjectRepository
 from app.services.contract_service import ContractService
+from app.services.document_access_setting_service import DocumentAccessSettingService
 
 contracts_router = APIRouter(prefix="", tags=["Contracts"])
 
@@ -42,6 +48,11 @@ def build_service(
         ContractRepository(supply_db),
         AuthUserRepository(auth_db) if auth_db else None,
         ReferenceObjectRepository(reference_db) if reference_db else None,
+        DocumentsListRepository(supply_db),
+        DepartmentRepository(supply_db),
+        DocumentAccessSettingService(DocumentAccessSettingRepository(supply_db)),
+        ContractExtractRepository(supply_db),
+        ExtractItemRepository(supply_db),
     )
 
 
@@ -416,6 +427,16 @@ def get_contracts(
     return build_service(supply_db, auth_db, reference_db).get_contracts()
 
 
+@contracts_router.get("/contracts-list", status_code=status.HTTP_200_OK)
+def get_contracts_list(
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db, auth_db, reference_db).get_contracts_list()
+
+
 @contracts_router.get("/contracts/my", status_code=status.HTTP_200_OK)
 def get_my_contracts(
     supply_db: DbSupplySession,
@@ -424,6 +445,17 @@ def get_my_contracts(
     _session=Depends(get_session),
 ):
     return build_service(supply_db, auth_db, reference_db).get_my_contracts(_session.user_id)
+
+
+@contracts_router.get("/contracts/by-object/{object_id}", status_code=status.HTTP_200_OK)
+def get_contracts_by_object(
+    object_id: str,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    return build_service(supply_db, auth_db, reference_db).get_contracts_by_object(object_id)
 
 
 @contracts_router.get("/contracts/{contract_id}", status_code=status.HTTP_200_OK)
@@ -435,6 +467,27 @@ def get_contract(
     _session=Depends(get_session),
 ):
     return build_service(supply_db, auth_db, reference_db).get_contract(contract_id)
+
+
+@contracts_router.get("/contracts/{contract_id}/access", status_code=status.HTTP_200_OK)
+def check_contract_access(
+    contract_id: int,
+    supply_db: DbSupplySession,
+    auth_db: DbAuthSession,
+    reference_db: DbReferenceSession,
+    _session=Depends(get_session),
+):
+    service = build_service(supply_db, auth_db, reference_db)
+    contract = service.repo.get_contract_by_id(contract_id)
+    if not contract:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Contract not found")
+    dept_repo = service.department_repo
+    doc_access = service.doc_access_service
+    dept_ids = dept_repo.get_department_ids_for_user(str(_session.user_id)) if dept_repo else []
+    counterparty_ids = [contract.customer_id, contract.contractor_id]
+    return doc_access.check_document_access(
+        "contract", str(_session.user_id), dept_ids, counterparty_ids,
+    )
 
 
 @contracts_router.post("/contracts", status_code=status.HTTP_201_CREATED)

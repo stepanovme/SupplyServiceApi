@@ -49,12 +49,13 @@ class CounterpartyRef(ReferenceBase):
     full_name = Column(String(500), nullable=True)
     type = Column(String(10), nullable=True)
     is_internal = Column(Integer, nullable=True)
+    logo_url = Column(String(500), nullable=True)
 
 
 class DetailsLLC(ReferenceBase):
     __tablename__ = "details_llc"
 
-    id = Column(String(36), primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     counterparties_id = Column(String(36), nullable=False, index=True)
     inn = Column(String(12), nullable=True)
     kpp = Column(String(9), nullable=True)
@@ -66,7 +67,7 @@ class DetailsLLC(ReferenceBase):
 class DetailsIP(ReferenceBase):
     __tablename__ = "details_ip"
 
-    id = Column(String(36), primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     counterparty_id = Column("counterparty_id", String(36), nullable=False, index=True)
     inn = Column(String(12), nullable=True)
     ogrnip = Column("ogrnip", String(15), nullable=True)

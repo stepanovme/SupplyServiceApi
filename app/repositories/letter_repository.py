@@ -42,6 +42,28 @@ class LetterRepository:
         rows = self.db.query(Letter.id).filter(Letter.id.in_(union_q)).all()
         return [row[0] for row in rows]
 
+    def get_all_letter_ids(self, letter_type: str | None = None) -> list[int]:
+        q = self.db.query(Letter.id)
+        if letter_type:
+            q = q.filter(Letter.type == letter_type)
+        rows = q.all()
+        return [row[0] for row in rows]
+
+    def get_letter_ids_by_counterparty(self, counterparty_ids: list[str], letter_type: str | None = None) -> list[int]:
+        from sqlalchemy import or_
+        if not counterparty_ids:
+            return []
+        q = self.db.query(Letter.id).filter(
+            or_(
+                Letter.from_to.in_(counterparty_ids),
+                Letter.where_to.in_(counterparty_ids),
+            )
+        )
+        if letter_type:
+            q = q.filter(Letter.type == letter_type)
+        rows = q.all()
+        return [row[0] for row in rows]
+
     def count_letters(self, counterparty_id: str | None = None, column: str | None = None, letter_type: str | None = None) -> int:
         from sqlalchemy import func
         q = self.db.query(func.count(Letter.id))

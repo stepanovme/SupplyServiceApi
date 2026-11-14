@@ -1,6 +1,10 @@
 import uuid
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
+
+from app.models.act import Act, ActType
+from app.models.documents_link import DocumentsLink
 
 from app.models.contract import (
     Contract,
@@ -33,6 +37,13 @@ class ContractRepository:
             return []
         return self.db.query(Contract).filter(Contract.id.in_(contract_ids)).order_by(Contract.id.desc()).all()
 
+    def get_contract_by_num_and_date(self, num: str, contract_date) -> Contract | None:
+        return (
+            self.db.query(Contract)
+            .filter(Contract.num == num, Contract.date == contract_date)
+            .first()
+        )
+
     def get_contract_ids_by_user(self, user_id: str) -> list[int]:
         from sqlalchemy import union
         from app.models.contract import ContractUserRole
@@ -42,12 +53,37 @@ class ContractRepository:
         rows = self.db.query(Contract.id).filter(Contract.id.in_(union_q)).all()
         return [row[0] for row in rows]
 
-    def count_contracts_by_internal_party(self, counterparty_id: str, role: str) -> int:
+    def get_all_contract_ids(self) -> list[int]:
+        rows = self.db.query(Contract.id).all()
+        return [row[0] for row in rows]
+
+    def get_contract_ids_by_counterparty(self, counterparty_ids: list[str]) -> list[int]:
+        from sqlalchemy import or_
+        if not counterparty_ids:
+            return []
+        rows = self.db.query(Contract.id).filter(
+            or_(
+                Contract.customer_id.in_(counterparty_ids),
+                Contract.contractor_id.in_(counterparty_ids),
+            )
+        ).all()
+        return [row[0] for row in rows]
+
+    def count_contracts_by_internal_party(
+        self, counterparty_id: str, role: str, contract_type: str, year: int | None = None
+    ) -> int:
         from sqlalchemy import func
         column = Contract.customer_id if role == "customer" else Contract.contractor_id
-        return self.db.query(func.count(Contract.id)).filter(
-            column == counterparty_id
-        ).scalar() or 0
+        q = self.db.query(func.count(Contract.id)).filter(
+            column == counterparty_id,
+            Contract.type == contract_type,
+        )
+        if year is not None:
+            from sqlalchemy import extract
+            q = q.filter(extract("year", Contract.date) == year)
+        else:
+            q = q.filter(Contract.date.is_(None))
+        return q.scalar() or 0
 
     def create_contract(self, payload: dict) -> Contract:
         row = Contract(**payload)
@@ -152,6 +188,16 @@ class ContractRepository:
             q = q.filter(ContractParty.contract_id == contract_id)
         return q.order_by(ContractParty.created_at.desc()).all()
 
+    def get_parties_by_contract_ids(self, contract_ids: list[int]) -> list[ContractParty]:
+        if not contract_ids:
+            return []
+        return (
+            self.db.query(ContractParty)
+            .filter(ContractParty.contract_id.in_(contract_ids))
+            .order_by(ContractParty.created_at.desc())
+            .all()
+        )
+
     def get_party_by_id(self, party_id: str) -> ContractParty | None:
         return self.db.query(ContractParty).filter(ContractParty.id == party_id).first()
 
@@ -181,6 +227,16 @@ class ContractRepository:
             q = q.filter(ContractUserRole.role == role)
         return q.order_by(ContractUserRole.created_at.desc()).all()
 
+    def get_user_roles_by_contract_ids(self, contract_ids: list[int]) -> list[ContractUserRole]:
+        if not contract_ids:
+            return []
+        return (
+            self.db.query(ContractUserRole)
+            .filter(ContractUserRole.contract_id.in_(contract_ids))
+            .order_by(ContractUserRole.created_at.desc())
+            .all()
+        )
+
     def get_user_role_by_id(self, role_id: str) -> ContractUserRole | None:
         return self.db.query(ContractUserRole).filter(ContractUserRole.id == role_id).first()
 
@@ -208,6 +264,16 @@ class ContractRepository:
             q = q.filter(WorkContract.contract_id == contract_id)
         return q.order_by(WorkContract.created_at.desc()).all()
 
+    def get_work_contracts_by_contract_ids(self, contract_ids: list[int]) -> list[WorkContract]:
+        if not contract_ids:
+            return []
+        return (
+            self.db.query(WorkContract)
+            .filter(WorkContract.contract_id.in_(contract_ids))
+            .order_by(WorkContract.created_at.desc())
+            .all()
+        )
+
     def get_work_contract_by_id(self, wc_id: str) -> WorkContract | None:
         return self.db.query(WorkContract).filter(WorkContract.id == wc_id).first()
 
@@ -229,6 +295,87 @@ class ContractRepository:
         if contract_id is not None:
             q = q.filter(ContractObject.contract_id == contract_id)
         return q.order_by(ContractObject.id.asc()).all()
+
+    def get_linked_acts_by_contract_ids(self, contract_ids: list[int]) -> dict[int, list[dict]]:
+        """contract id -> the acts linked to it through documents_links (a link may be stored in
+        either order). One act is listed once per contract however many links point at it."""
+        result: dict[int, list[dict]] = {cid: [] for cid in contract_ids}
+        if not contract_ids:
+            return result
+
+        ids = [str(c) for c in contract_ids]
+        links = (
+            self.db.query(DocumentsLink)
+            .filter(
+                or_(
+                    and_(
+                        DocumentsLink.document_type_first == "act",
+                        DocumentsLink.document_type_second == "contract",
+                        DocumentsLink.document_linked_second.in_(ids),
+                    ),
+                    and_(
+                        DocumentsLink.document_type_first == "contract",
+                        DocumentsLink.document_type_second == "act",
+                        DocumentsLink.document_linked_first.in_(ids),
+                    ),
+                )
+            )
+            .all()
+        )
+        pairs: set[tuple[int, int]] = set()
+        for link in links:
+            contract_ref, act_ref = (
+                (link.document_linked_second, link.document_linked_first)
+                if link.document_type_first == "act"
+                else (link.document_linked_first, link.document_linked_second)
+            )
+            if str(contract_ref).isdigit() and str(act_ref).isdigit():
+                pairs.add((int(contract_ref), int(act_ref)))
+        if not pairs:
+            return result
+
+        rows = (
+            self.db.query(Act, ActType.name)
+            .outerjoin(ActType, ActType.id == Act.act_type_id)
+            .filter(Act.id.in_({act_id for _c, act_id in pairs}))
+            .all()
+        )
+        acts = {
+            act.id: {
+                "id": act.id,
+                "act_type_id": act.act_type_id,
+                "act_type_name": type_name or "",
+                "num": act.num,
+                "fullname": f"{type_name or ''} №{act.num}".strip(),
+                "date": act.date,
+                "sum": float(act.sum) if act.sum is not None else None,
+            }
+            for act, type_name in rows
+        }
+        for contract_id, act_id in sorted(pairs):
+            if act_id in acts and contract_id in result:
+                result[contract_id].append(acts[act_id])
+        return result
+
+    def get_contract_objects_by_contract_ids(self, contract_ids: list[int]) -> list[ContractObject]:
+        if not contract_ids:
+            return []
+        return (
+            self.db.query(ContractObject)
+            .filter(ContractObject.contract_id.in_(contract_ids))
+            .order_by(ContractObject.id.asc())
+            .all()
+        )
+
+    def get_contract_objects_by_object_ids(self, object_ids: list[str]) -> list[ContractObject]:
+        if not object_ids:
+            return []
+        return (
+            self.db.query(ContractObject)
+            .filter(ContractObject.object_id.in_(object_ids))
+            .order_by(ContractObject.id.asc())
+            .all()
+        )
 
     def get_contract_object_by_id(self, obj_id: int) -> ContractObject | None:
         return self.db.query(ContractObject).filter(ContractObject.id == obj_id).first()
@@ -330,6 +477,16 @@ class ContractRepository:
         if contract_id is not None:
             q = q.filter(ContractStatus.contract_id == contract_id)
         return q.order_by(ContractStatus.created_at.desc()).all()
+
+    def get_contract_statuses_by_contract_ids(self, contract_ids: list[int]) -> list[ContractStatus]:
+        if not contract_ids:
+            return []
+        return (
+            self.db.query(ContractStatus)
+            .filter(ContractStatus.contract_id.in_(contract_ids))
+            .order_by(ContractStatus.created_at.desc())
+            .all()
+        )
 
     def get_contract_status_by_id(self, status_id: str) -> ContractStatus | None:
         return self.db.query(ContractStatus).filter(ContractStatus.id == status_id).first()

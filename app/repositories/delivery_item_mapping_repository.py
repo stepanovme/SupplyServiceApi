@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.models.delivery import DeliveryItem
 from app.models.delivery_item_mapping import DeliveryItemMapping
+from app.models.supply_request import UnitRef
 
 
 class DeliveryItemMappingRepository:
@@ -121,6 +122,13 @@ class DeliveryItemMappingRepository:
             )
             for row in rows
         ]
+
+    def get_unit_names(self, unit_ids: list[str]) -> dict[str, str]:
+        unique_ids = list({uid for uid in unit_ids if uid})
+        if not unique_ids:
+            return {}
+        rows = self.db.query(UnitRef.id, UnitRef.name).filter(UnitRef.id.in_(unique_ids)).all()
+        return {str(unit_id): unit_name for unit_id, unit_name in rows}
 
     def _get_table_columns(self, table_name: str) -> set[str]:
         cached = self._table_columns_cache.get(table_name)

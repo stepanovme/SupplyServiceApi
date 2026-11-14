@@ -31,6 +31,73 @@ def _service(
     )
 
 
+@deliveries_router.get(
+    "/check-planning/{invoice_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Проверить запланированность доставки по счёту",
+)
+def check_delivery_planning(
+    invoice_id: int,
+    db: DbSupplySession,
+    _session=Depends(get_session),
+):
+    from collections import defaultdict
+    from app.models.delivery import Delivery, DeliveryItem
+    from app.models.invoice import InvoiceItem
+
+    deliveries = db.query(Delivery).filter(Delivery.invoice_id == invoice_id).all()
+    if not deliveries:
+        return {
+            "invoice_id": invoice_id,
+            "is_fully_planned": False,
+            "delivery_exists": False,
+            "items": [],
+        }
+
+    delivery_ids = [d.id for d in deliveries]
+    delivery_items = (
+        db.query(DeliveryItem)
+        .filter(DeliveryItem.delivery_id.in_(delivery_ids))
+        .all()
+    )
+
+    invoice_items = (
+        db.query(InvoiceItem)
+        .filter(InvoiceItem.invoice_id == invoice_id)
+        .all()
+    )
+
+    planned_by_invoice_item: dict[str, float] = defaultdict(float)
+    for di in delivery_items:
+        if di.invoice_item_id:
+            planned_by_invoice_item[di.invoice_item_id] += di.quantity or 0
+
+    items = []
+    all_fully_planned = True
+    for inv_item in invoice_items:
+        if inv_item.type in ("tax", "delivery"):
+            continue
+        planned_qty = planned_by_invoice_item.get(inv_item.id, 0)
+        required_qty = inv_item.quantity or 0
+        is_planned = planned_qty >= required_qty if required_qty > 0 else True
+        if not is_planned:
+            all_fully_planned = False
+        items.append({
+            "invoice_item_id": inv_item.id,
+            "name": inv_item.name,
+            "required_quantity": required_qty,
+            "planned_quantity": planned_qty,
+            "is_fully_planned": is_planned,
+        })
+
+    return {
+        "invoice_id": invoice_id,
+        "is_fully_planned": all_fully_planned,
+        "delivery_exists": True,
+        "items": items,
+    }
+
+
 @deliveries_router.get("", status_code=status.HTTP_200_OK, summary="Получить список доставок")
 def get_deliveries(
     db: DbSupplySession,
